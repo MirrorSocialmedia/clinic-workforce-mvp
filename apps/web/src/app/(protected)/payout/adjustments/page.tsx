@@ -5,7 +5,7 @@
  * OWNER / provider_payout 權限
  * ★ 2026-08-17: 加 clinicId 必填 — 每筆調整必須綁定診所
  */
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { apiFetch } from '@/lib/api-client'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -34,6 +34,31 @@ export default function AdjustmentsPage() {
     amount: '',
     note: '',
   })
+
+  // ★ cwm-adjlist-20261012：之前嘅手動調整記錄（預設全部最近 200 筆；可篩月份／醫生／診所）
+  const [rows, setRows] = useState<AdjRow[]>([])
+  const [listLoading, setListLoading] = useState(false)
+  const [listError, setListError] = useState('')
+  const [fMonth, setFMonth] = useState('')
+  const [fProvider, setFProvider] = useState('')
+  const [fClinic, setFClinic] = useState('')
+  const loadList = useCallback(async () => {
+    setListLoading(true)
+    setListError('')
+    try {
+      const q = new URLSearchParams()
+      if (fMonth) q.set('month', fMonth)
+      if (fProvider) q.set('providerId', fProvider)
+      if (fClinic) q.set('clinicId', fClinic)
+      const res = await apiFetch<{ adjustments: AdjRow[] }>(`/api/payout-adjustments?${q}`)
+      setRows(res.adjustments || [])
+    } catch (e: any) {
+      setListError(e?.message || '載入記錄失敗')
+    } finally {
+      setListLoading(false)
+    }
+  }, [fMonth, fProvider, fClinic])
+  useEffect(() => { loadList() }, [loadList])
 
   const REASONS = [
     { value: 'MANUAL', label: '手動調整' },
@@ -100,6 +125,7 @@ export default function AdjustmentsPage() {
         reason: '', refCode: '', amount: '', note: '',
       })
       alert('調整記錄已新增')
+      loadList()
     } catch (e: any) {
       alert(`提交失敗: ${e.message}`)
     } finally {
@@ -110,7 +136,7 @@ export default function AdjustmentsPage() {
   if (loading) return <div className="p-6">載入中...</div>
 
   return (
-    <div className="p-6 max-w-3xl mx-auto">
+    <div className="p-6 max-w-5xl mx-auto">
       <Button
         variant="ghost"
         onClick={() => window.history.back()}
@@ -238,6 +264,109 @@ export default function AdjustmentsPage() {
           )}
         </form>
       </Card>
+
+      {/* ★ cwm-adjlist-20261012：之前嘅手動調整記錄 */}
+      <Card className="p-4 mb-6">
+        <div className="flex flex-wrap items-end gap-3 mb-3">
+          <h2 className="font-semibold mr-auto">之前嘅調整記錄</h2>
+          <label className="text-xs text-gray-600 flex flex-col gap-1">月份
+            <Input type="month" value={fMonth} onChange={e => setFMonth(e.target.value)} className="h-9" />
+          </label>
+          <label className="text-xs text-gray-600 flex flex-col gap-1">醫生
+            <select className="border rounded px-2 h-9 text-sm" value={fProvider} onChange={e => setFProvider(e.target.value)}>
+              <option value="">全部醫生</option>
+              {providers.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+          </label>
+          <label className="text-xs text-gray-600 flex flex-col gap-1">診所
+            <select className="border rounded px-2 h-9 text-sm" value={fClinic} onChange={e => setFClinic(e.target.value)}>
+              <option value="">全部診所</option>
+              {clinics.map(c => <option key={c.id} value={c.id}>{c.shortName || c.name}</option>)}
+            </select>
+          </label>
+          {(fMonth || fProvider || fClinic) && (
+            <button type="button" className="text-xs underline text-gray-500 h-9" onClick={() => { setFMonth(''); setFProvider(''); setFClinic('') }}>清除</button>
+          )}
+        </div>
+        {listError && <div className="text-sm text-red-700 mb-2">⚠️ {listError}</div>}
+        {listLoading ? (
+          <div className="text-sm text-gray-500 py-4">載入中…</div>
+        ) : rows.length === 0 ? (
+          <div className="text-sm text-gray-500 py-4">{fMonth || fProvider || fClinic ? '呢個篩選冇調整記錄' : '未有調整記錄'}</div>
+        ) : (
+          <>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-left border-b text-xs text-gray-500">
+                    <th className="py-1.5 pr-2">月份</th>
+                    <th className="py-1.5 pr-2">醫生</th>
+                    <th className="py-1.5 pr-2">診所</th>
+                    <th className="py-1.5 pr-2">原因</th>
+                    <th className="py-1.5 pr-2 text-right">金額</th>
+                    <th className="py-1.5 pr-2">單據／備註</th>
+                    <th className="py-1.5 pr-2">月結</th>
+                    <th className="py-1.5">錄入</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map(r => (
+                    <tr key={r.id} className="border-b last:border-0 align-top">
+                      <td className="py-1.5 pr-2 whitespace-nowrap">
+                        {r.periodMonth}
+                        {r.sourceMonth && r.sourceMonth !== r.periodMonth && <div className="text-xs text-gray-500">原 {r.sourceMonth}</div>}
+                      </td>
+                      <td className="py-1.5 pr-2">{r.providerName}</td>
+                      <td className="py-1.5 pr-2 whitespace-nowrap">{r.clinicName}</td>
+                      <td className="py-1.5 pr-2 whitespace-nowrap">{REASON_LABEL[r.reason] ?? r.reason}</td>
+                      <td className={`py-1.5 pr-2 text-right tabular-nums whitespace-nowrap font-semibold ${r.amount < 0 ? 'text-red-700' : 'text-green-700'}`}>
+                        {r.amount < 0 ? '−' : '+'}${Math.abs(r.amount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </td>
+                      <td className="py-1.5 pr-2 text-xs text-gray-700 max-w-[220px]">
+                        {r.refCode && <div className="font-mono">{r.refCode}</div>}
+                        {r.note && <div className="break-words">{r.note}</div>}
+                        {!r.refCode && !r.note && <span className="text-gray-400">—</span>}
+                      </td>
+                      <td className="py-1.5 pr-2 whitespace-nowrap text-xs">
+                        {r.runStatus === 'LOCKED' ? <span className="text-green-700">🔒 已入月結</span>
+                          : r.runStatus ? <span className="text-amber-700">草稿月結</span>
+                          : <span className="text-gray-500">未入月結</span>}
+                      </td>
+                      <td className="py-1.5 text-xs text-gray-500 whitespace-nowrap">
+                        {r.createdByName}
+                        <div>{new Date(r.createdAt).toLocaleString('zh-HK', { timeZone: 'Asia/Hong_Kong', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false })}</div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="text-xs text-gray-500 mt-2">
+              共 {rows.length} 筆{rows.length >= 200 ? '（最多顯示最近 200 筆，請用月份／醫生篩選）' : ''} · 合計{' '}
+              <b className="tabular-nums">{(() => { const t = Math.round(rows.reduce((s, r) => s + r.amount, 0) * 100) / 100; return `${t < 0 ? '−' : '+'}$${Math.abs(t).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` })()}</b>
+            </div>
+          </>
+        )}
+      </Card>
     </div>
   )
 }
+
+interface AdjRow {
+  id: string
+  providerId: string
+  providerName: string
+  clinicId: string | null
+  clinicName: string
+  periodMonth: string
+  sourceMonth: string
+  reason: string
+  refCode: string | null
+  amount: number
+  note: string
+  createdByName: string
+  createdAt: string
+  runStatus: string | null
+}
+
+const REASON_LABEL: Record<string, string> = { MANUAL: '手動調整', VOID: '作廢回沖', REFUND: '退款' }
