@@ -429,6 +429,7 @@ export const CONFIG = {
     'DELETE /api/payout-runs/:id': ['OWNER'], // ★ AA4: 刪除草稿月結單
     'GET /api/payout-runs/:id/export': ['OWNER'], // ★ AA3: Excel 匯出
     'GET /api/payout-runs/clinic-report': ['OWNER'], // ★ cwm-payoutxlsx C: 全店月報（MD 坑⑧）
+    'GET /api/payout-runs/export-zip': ['OWNER'], // ★ cwm-exportzip-20261012：一鍵匯出（全店＋逐個醫生）—— 同全店月報
     'GET /api/payout-runs/daily': ['OWNER', 'KIOSK'], // ★ cwm-dailyrev-20261003: 每日大數（同月結單同一權限）；★ cwm-dailyv2-20261007 ③: +KIOSK（店舖護士核對，route 內經 kioskDailyScope 收窄）
     'GET /api/payout-runs/daily/check': ['OWNER', 'KIOSK'], // ★ cwm-dailycheck-20261006: 每日大數護士核對；★ ③: +KIOSK（kioskClinicAllowed 只准自己店）
     'POST /api/payout-runs/daily/check': ['OWNER', 'KIOSK'], // ★ ③: +KIOSK
@@ -466,6 +467,7 @@ export const CONFIG = {
     //   EMPLOYEE 等其他角色經 RBAC_PERM_OVERRIDES 的 lab_invoice／lab_statement 放行（B10）。
     'POST /api/lab-docs/upload': ['OWNER', 'MANAGER'],
     'GET /api/lab-docs': ['OWNER', 'MANAGER'],
+    'GET /api/lab-docs/statement-progress': ['OWNER', 'MANAGER'], // ★ cwm-labstmtprog-20261012：月結單逐店已對／未對（同列表）
     'GET /api/lab-docs/:id': ['OWNER', 'MANAGER'],
     //   P2：再讀（§11；EMPLOYEE 經 RBAC_PERM_OVERRIDES 嘅 lab_invoice 放行）
     'POST /api/lab-docs/:id/retry': ['OWNER', 'MANAGER'],
@@ -756,6 +758,7 @@ export const RBAC_PERM_OVERRIDES: Record<string, string[]> = {
   'DELETE /api/payout-runs/:id': ['provider_payout'], // ★ AA4
   'GET /api/payout-runs/:id/export': ['provider_payout'], // ★ AA3
   'GET /api/payout-runs/clinic-report': ['provider_payout'], // ★ cwm-payoutxlsx C: 全店月報（同單張匯出同一套權限）
+  'GET /api/payout-runs/export-zip': ['provider_payout'], // ★ cwm-exportzip-20261012（同全店月報）
   'GET /api/payout-runs/daily': ['provider_payout'], // ★ cwm-dailyrev-20261003
   'GET /api/payout-runs/daily/check': ['provider_payout'], // ★ cwm-dailycheck-20261006
   'POST /api/payout-runs/daily/check': ['provider_payout'],
@@ -788,6 +791,7 @@ export const RBAC_PERM_OVERRIDES: Record<string, string[]> = {
   // ★ cwm-labdoc P1：Lab 單據 — §10.2：上傳、檔案庫、睇檔／下載原檔 = lab_invoice ✅ lab_statement ✅
   'POST /api/lab-docs/upload': ['lab_invoice', 'lab_statement'],
   'GET /api/lab-docs': ['lab_invoice', 'lab_statement'],
+  'GET /api/lab-docs/statement-progress': ['lab_invoice', 'lab_statement'], // ★ cwm-labstmtprog-20261012
   'GET /api/lab-docs/:id': ['lab_invoice', 'lab_statement'],
   // ★ cwm-labdoc P2：再讀 = lab_invoice（§11）
   'POST /api/lab-docs/:id/retry': ['lab_invoice'],

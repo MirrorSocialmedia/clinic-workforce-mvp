@@ -122,6 +122,7 @@ export const SENSITIVE_AUDIT_SPEC: Array<{ action: string; entity?: string; labe
   { action: 'PAYOUT_EXPORT', label: '匯出月結單' },
   { action: 'PAYOUT_EXPORT_MISMATCH', label: '⚠️ 月結單匯出金額對數唔符（已停止匯出）' }, // ★ cwm-payout P-4（MD §2.3）
   { action: 'PAYOUT_CLINIC_REPORT_EXPORT', label: '匯出全店月度收入報表（含病人姓名）' }, // ★ cwm-payoutxlsx C（MD 坑⑦）
+  { action: 'PAYOUT_EXPORT_ZIP', label: '一鍵匯出醫生月結（全店＋逐個醫生，含病人姓名）' }, // ★ cwm-exportzip-20261012
   { action: 'PAYOUT_DAILY_EXPORT', label: '匯出每日大數' }, // ★ cwm-dailyrev-20261003
   { action: 'REFERRAL_CREATE', label: '新增轉介記錄' },
   { action: 'REFERRAL_DELETE', label: '刪除轉介記錄' },

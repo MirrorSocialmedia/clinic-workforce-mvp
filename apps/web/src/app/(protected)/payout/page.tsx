@@ -11,7 +11,7 @@ import { apiFetch } from '@/lib/api-client'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
-import { Plus, Eye, Lock, FileText, Users, Share2, AlertTriangle, CheckCircle2, SlidersHorizontal, Download, CalendarDays } from 'lucide-react'
+import { Plus, Eye, Lock, FileText, Users, Share2, AlertTriangle, CheckCircle2, SlidersHorizontal, Download, CalendarDays, FileArchive } from 'lucide-react'
 import { hasPermission } from '@/lib/permissions'
 import { CostDetailRow } from '@/components/payout/CostDetailRow'
 import { SpReviewRow } from '@/components/payout/SpReviewRow'
@@ -271,6 +271,38 @@ function PayoutRunsPageInner() {
     }
   }
 
+  // ★ cwm-exportzip-20261012：一鍵匯出（全店＋逐個醫生）—— 未鎖定嘅醫生唔出獨立檔，先提示
+  const [zipBusy, setZipBusy] = useState(false)
+  async function exportZip() {
+    if (!selectedClinic || !selectedMonth) return
+    const pending = [
+      ...runs.filter(r => r.clinicId === selectedClinic && r.periodMonth === selectedMonth && r.status !== 'LOCKED').map(r => r.provider?.name),
+      ...uncoveredProviders.map(p => p.name),
+    ].filter((n, i, a): n is string => !!n && a.indexOf(n) === i)
+    if (pending.length > 0 && !window.confirm(
+      `以下醫生未鎖定，唔會有獨立 Excel（全店月報照出黃色草稿頁）：\n${pending.join('、')}\n\n繼續匯出？`,
+    )) return
+    setZipBusy(true)
+    try {
+      const res = await fetch(`/api/payout-runs/export-zip?clinicId=${selectedClinic}&periodMonth=${selectedMonth}`, { credentials: 'include' })
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({} as any))
+        alert(j.error || `匯出失敗（HTTP ${res.status}）`)
+        return
+      }
+      const blob = await res.blob()
+      const cd = res.headers.get('Content-Disposition') || ''
+      const m = /filename\*=UTF-8''([^;]+)/.exec(cd)
+      const a = document.createElement('a')
+      a.href = URL.createObjectURL(blob)
+      a.download = m ? decodeURIComponent(m[1]) : `payout_${selectedMonth}.zip`
+      document.body.appendChild(a); a.click(); a.remove()
+      setTimeout(() => URL.revokeObjectURL(a.href), 5000)
+    } catch (e: any) {
+      alert(e?.message || '匯出失敗')
+    } finally { setZipBusy(false) }
+  }
+
   async function handlePreview() {
     if (!selectedProvider || !selectedMonth || !selectedClinic) {
       alert('請選擇醫生、診所和月份')
@@ -487,6 +519,13 @@ function PayoutRunsPageInner() {
               }}
             >
               <Download size={14} className="mr-1" /> 月度收入報表
+            </Button>
+            {/* ★ cwm-exportzip-20261012：一鍵匯出 ZIP —— 全店月報 1 份 ＋ 每位【已鎖定】醫生獨立 Excel（檔名醫生全名） */}
+            <Button
+              disabled={!selectedClinic || !selectedMonth || zipBusy}
+              onClick={exportZip}
+            >
+              <FileArchive size={14} className="mr-1" /> {zipBusy ? '匯出中…' : '一鍵匯出（全店＋逐個醫生）'}
             </Button>
           </div>
 

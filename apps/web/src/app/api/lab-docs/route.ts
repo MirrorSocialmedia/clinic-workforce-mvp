@@ -1,5 +1,5 @@
 // ★ cwm-labdoc P1：GET /api/lab-docs — 列表／檔案庫（§4.3、§11）
-// filters：kind、status（csv）、labId、clinicId、providerId、month、q、ids（csv）、page、hideVoid
+// filters：kind、status（csv）、labId、clinicId、providerId、month、q、ids（csv）、page、hideVoid、notReconciled
 // ★ 2026-10-11：hideVoid=1 → 唔列已作廢（到貨單／月結單分頁預設）；月結單 clinicId 篩分段診所；
 //   月結單每項帶 sectionSummary（診所／醫生／總數／確認進度由分段計 — statement-list.ts）；uploadedByName
 // → { items: [{document, labName, firstPageThumb, pageCount, uploadedByName}], total, page, pageSize }
@@ -47,11 +47,14 @@ export async function GET(req: NextRequest) {
   else if (scope) where.clinicId = { in: scope }
   if (kind === 'INVOICE' || kind === 'STATEMENT') where.kind = kind
   if (status?.length) where.status = { in: status }
+  // ★ cwm-labstmtprog-20261012：只睇未對（月結單）—— 未全部段確認（唔係已對），已作廢／重複／已取代都唔列
+  else if (sp.get('notReconciled') === '1') where.status = { notIn: ['RECONCILED', 'VOID', 'SUPERSEDED', 'DUPLICATE'] }
   else if (hideVoid) where.status = { not: 'VOID' }
   if (labId) where.labId = labId
   if (clinicId) {
     // 月結單：診所喺分段（一份可以有幾間）；到貨單：單據診所
-    if (kind === 'STATEMENT') and.push({ OR: [{ clinicId }, { sections: { some: { clinicId } } }] })
+    // ★ cwm-labstmtprog-20261012：未分段又冇單頭店 → 歸上傳店（同逐店進度卡 statement-progress 同一規則）
+    if (kind === 'STATEMENT') and.push({ OR: [{ clinicId }, { sections: { some: { clinicId } } }, { clinicId: null, uploadClinicId: clinicId, sections: { none: { clinicId: { not: null } } } }] })
     else and.push({ clinicId })
   }
   if (and.length) where.AND = and
