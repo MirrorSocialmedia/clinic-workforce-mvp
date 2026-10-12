@@ -7,7 +7,35 @@
  * 做法：自己用字面路徑先 import worker（nft 會帶埋入 image），放入 globalThis.pdfjsWorker —
  * pdfjs 見到 main-thread WorkerMessageHandler 就唔再 import workerSrc。
  */
+import { existsSync } from 'node:fs'
+import { join } from 'node:path'
+
 let cached: Promise<any> | null = null
+let docOpts: Record<string, unknown> | null = null
+
+/**
+ * ★ 2026-10-11：getDocument 共用參數 — cMap 同標準字型資料夾。
+ * 冇 cMapUrl：用預設 CMap（例如 UniCNS-UCS2-H）而冇嵌入字型嘅中文字（Modern Dental 月結單收件人格）
+ * 會解唔到 → 抽文字成段冇咗、渲染出亂碼（pdfjs：「Ensure that the `cMapUrl` API parameter is provided」）。
+ * Dockerfile 保留咗 pdfjs-dist/cmaps 同 standard_fonts；呢度搵返實際路徑（standalone /app 或者 dev apps/web）。
+ */
+export function pdfjsDocOptions(): Record<string, unknown> {
+  if (docOpts) return docOpts
+  const candidates = [
+    join(process.cwd(), 'node_modules', 'pdfjs-dist'),
+    join(process.cwd(), 'apps', 'web', 'node_modules', 'pdfjs-dist'),
+  ]
+  const dir = candidates.find((d) => existsSync(join(d, 'cmaps')))
+  docOpts = dir
+    ? {
+        cMapUrl: join(dir, 'cmaps') + '/',
+        cMapPacked: true,
+        standardFontDataUrl: join(dir, 'standard_fonts') + '/',
+      }
+    : {}
+  if (!dir) console.error('[labdoc/pdfjs] 搵唔到 pdfjs-dist/cmaps — 中文 CMap 字型會讀唔到')
+  return docOpts
+}
 
 export function loadPdfjs(): Promise<any> {
   cached ??= (async () => {

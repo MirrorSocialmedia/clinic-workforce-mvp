@@ -7,7 +7,9 @@
  *   magic %PDF-；拒絕加密 PDF；頁數 ≤ 30；pdfjs-dist 逐頁抽文字
  *   （hasTextLayer = 每頁文字 ≥ 20 字）＋ @napi-rs/canvas 渲染顯示圖＋縮圖
  */
-import { loadPdfjs } from './pdfjs'
+import { existsSync, readdirSync, type Dirent } from 'node:fs'
+import { join } from 'node:path'
+import { loadPdfjs, pdfjsDocOptions } from './pdfjs'
 
 export const DISPLAY_MAX_EDGE = 1600
 export const THUMB_MAX_EDGE = 320
@@ -112,16 +114,68 @@ export interface ProcessedPdf {
   hasTextLayer: boolean
 }
 
+/**
+ * ★ 2026-10-11：冇嵌入字型嘅中文（例如 Modern Dental 月結單收件人格用 MingLiU＋預設 CMap）
+ * pdfjs 會叫 canvas 用 `"MingLiU", …, monospace` 畫；伺服器冇呢隻字型 → 落到 monospace／serif／sans-serif，
+ * 嗰啲通用字型冇中文 → 變方格／亂碼（Chrome 睇正常係因為用咗電腦自己嘅字型）。
+ * 做法：搵一隻伺服器上嘅 CJK 字型（Docker：font-noto-cjk），登記做呢三個通用字型名。只做一次。
+ */
+let cjkFallbackDone = false
+const FONT_DIRS = ['/usr/share/fonts', '/usr/local/share/fonts']
+const CJK_FONT_RE = /(NotoSansCJK|NotoSerifCJK|SourceHanSans|SourceHanSerif|wqy-zenhei|wqy-microhei|DroidSansFallback).*\.(ttc|otf|ttf)$/i
+function findCjkFont(): string | null {
+  const stack = FONT_DIRS.filter((d) => existsSync(d))
+  const found: string[] = []
+  while (stack.length > 0 && found.length < 50) {
+    const dir = stack.pop()!
+    let entries: Dirent[] = []
+    try {
+      entries = readdirSync(dir, { withFileTypes: true })
+    } catch {
+      continue
+    }
+    for (const e of entries) {
+      const full = join(dir, e.name)
+      if (e.isDirectory()) stack.push(full)
+      else if (CJK_FONT_RE.test(e.name)) found.push(full)
+    }
+  }
+  // Sans Regular 優先（睇得清楚）
+  found.sort((a, b) => score(b) - score(a))
+  return found[0] ?? null
+  function score(f: string): number {
+    return (/Sans/i.test(f) ? 2 : 0) + (/Regular/i.test(f) ? 1 : 0)
+  }
+}
+function ensureCjkFallbackFont(GlobalFonts: any): void {
+  if (cjkFallbackDone) return
+  cjkFallbackDone = true
+  const file = findCjkFont()
+  if (!file) {
+    console.error('[labdoc/process] 伺服器冇 CJK 字型 — 冇嵌入字型嘅中文 PDF 會顯示唔到中文')
+    return
+  }
+  for (const alias of ['monospace', 'serif', 'sans-serif']) {
+    try {
+      GlobalFonts.registerFromPath(file, alias)
+    } catch (e) {
+      console.error('[labdoc/process] 登記 CJK 字型失敗', alias, String((e as Error)?.message ?? e))
+    }
+  }
+}
+
 export async function processPdf(raw: Buffer): Promise<ProcessedPdf> {
   // webpackIgnore：pdfjs + @napi-rs/canvas（native）— runtime 原生載入，同 alpine CI 同路徑
   const pdfjs = await loadPdfjs()
-  const { createCanvas } = await import(/* webpackIgnore: true */ '@napi-rs/canvas')
+  const { createCanvas, GlobalFonts } = await import(/* webpackIgnore: true */ '@napi-rs/canvas')
+  ensureCjkFallbackFont(GlobalFonts)
 
   let doc: any
   try {
     const loadingTask = pdfjs.getDocument({
       data: new Uint8Array(raw),
       useSystemFonts: true,
+      ...pdfjsDocOptions(),
     })
     doc = await loadingTask.promise
   } catch (e: any) {
