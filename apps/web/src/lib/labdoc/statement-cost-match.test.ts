@@ -126,3 +126,53 @@ test('人手配對嘅成本出咗範圍（例如改咗醫生）→ 行變未配�
   assert.deepEqual(r.pairs, [])
   assert.equal(r.lines[0].result, 'UNPAIRED')
 })
+
+// ───────── 2026-10-11：計入下個月／上月結轉 ─────────
+
+test('計入下個月：本月唔計（nextMonthTotal）；KEA 9 月 $2,080 − $440 = $1,640 ＝ 成本 → OK', () => {
+  const lines = [L(0, 440), L(1, 440), L(2, 320), L(3, 440), L(4, 440, { resolution: 'NEXT_MONTH', docNo: '2609260002' })]
+  const r = matchStatementToCosts({ ...base, lines, costs: [C('a', 440), C('b', 440), C('c', 320), C('d', 440)] })
+  assert.equal(r.statementTotal, 1640)
+  assert.equal(r.nextMonthTotal, 440)
+  assert.equal(r.status, 'OK')
+  assert.equal(r.lines.find((x) => x.id === 'l4')!.result, 'NOT_APPLICABLE')
+})
+
+test('上月結轉：副本計入本月（carryInTotal）；讀數檢查唔計副本', () => {
+  const lines = [L(0, 1000, { docNo: 'A1' }), L(1, 440, { docNo: '2609260002', carriedFromLineId: 'src1' })]
+  const r = matchStatementToCosts({ ...base, statementMonth: '2026-10', statedTotal: 1000, lines, costs: [C('a', 1000), C('b', 440)] })
+  assert.equal(r.statementTotal, 1440)
+  assert.equal(r.carryInTotal, 440)
+  assert.equal(r.status, 'OK')
+  assert.equal(r.readCheck?.ok, true, '印嘅總數只對本月單自己嘅行')
+  assert.deepEqual(r.carryDuplicateLineIds, [])
+})
+
+test('上月結轉：本月月結單已經有同一個單號 → 副本唔計（唔會計兩次）', () => {
+  const lines = [L(0, 440, { docNo: '2609260002' }), L(1, 440, { docNo: '2609260002', carriedFromLineId: 'src1' })]
+  const r = matchStatementToCosts({ ...base, statementMonth: '2026-10', lines, costs: [C('a', 440)] })
+  assert.equal(r.statementTotal, 440)
+  assert.equal(r.carryInTotal, 0)
+  assert.deepEqual(r.carryDuplicateLineIds, ['l1'])
+  assert.equal(r.lines.find((x) => x.id === 'l1')!.result, 'NOT_APPLICABLE')
+  assert.equal(r.status, 'OK')
+})
+
+test('上月結轉：冇單號 → 照計；欠款型（有分齡欄）副本照計', () => {
+  const lines = [
+    L(0, 300, { agingBucket: 'CURRENT' }),
+    L(1, 999, { agingBucket: 'D31_90' }),
+    L(2, 200, { carriedFromLineId: 'src1' }),
+  ]
+  const r = matchStatementToCosts({ ...base, outstanding: true, statementMonth: '2026-10', lines, costs: [C('a', 500)] })
+  assert.equal(r.statementTotal, 500)
+  assert.equal(r.carryInTotal, 200)
+})
+
+test('上月結轉副本再標計入下個月 → 本月唔計', () => {
+  const lines = [L(0, 440, { carriedFromLineId: 'src1', resolution: 'NEXT_MONTH' })]
+  const r = matchStatementToCosts({ ...base, statementMonth: '2026-10', lines, costs: [] })
+  assert.equal(r.statementTotal, 0)
+  assert.equal(r.nextMonthTotal, 440)
+  assert.equal(r.carryInTotal, 0)
+})

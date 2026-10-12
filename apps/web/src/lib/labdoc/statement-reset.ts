@@ -20,9 +20,12 @@ export const SYSTEM_CHANGE_BLOCK_MSG =
 /**
  * 清走分段所有行嘅配對，分段結果歸零（要喺 transaction 入面行）。
  * 「備貨」／「唔關我哋事」標記同診所、醫生、月份無關 → 保留；其他舊處理清走。
+ * ★ 2026-10-11：「計入下個月」（NEXT_MONTH）係對應舊範圍嘅下個月 → 一齊清（route 先用 sectionsCarryLocked 擋已確認）；
+ *   上月結轉副本屬舊範圍 → 刪走（新範圍對數時再同步）。改完 route 要 reconcileCarryTargets(舊範圍)。
  */
 export async function resetSectionMatching(tx: any, sectionIds: string[]): Promise<void> {
   if (sectionIds.length === 0) return
+  await tx.labStatementLine.deleteMany({ where: { sectionId: { in: sectionIds }, carriedFromLineId: { not: null } } })
   await tx.labStatementLine.updateMany({
     where: { sectionId: { in: sectionIds } },
     // 人手配對／未配對到都係基於呢段嘅成本範圍 → 一齊清

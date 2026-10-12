@@ -2157,8 +2157,14 @@ model LabStatementLine {
   //   NONE   = 「未配對到」：系統唔再自動將呢行劃埋任何成本
   pairMode          String?
   pairCostCaseId    String?
+  // ★ 2026-10-11：「計入下個月」結轉 — 呢行係由上個月月結單（resolution NEXT_MONTH）帶過嚟嘅副本
+  //   carriedFromLineId = 上個月嗰行；carriedFromMonth = 上個月（顯示用）。對數時同步（statement-carry.ts）
+  carriedFromLineId String?
+  carriedFromMonth  String?
 
   @@unique([sectionId, lineIndex])
+  @@unique([sectionId, carriedFromLineId])
+  @@index([carriedFromLineId])
   @@index([matchedDocumentId])
 }
 

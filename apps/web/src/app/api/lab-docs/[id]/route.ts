@@ -9,7 +9,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { jsonNoStore } from '@/lib/api-response'
-import { statementCostSummary } from '@/lib/labdoc/statement-reconcile'
+import { statementCostSummary, afterCarryChange } from '@/lib/labdoc/statement-reconcile'
 import { labDocQueuePositions } from '@/lib/labdoc/queue-position'
 import { findStatementSectionDuplicate } from '@/lib/labdoc/statement-sections'
 import { labdocScope, kioskDocGuard, kioskSectionAllowed, kioskClinics } from '@/lib/labdoc/kiosk-scope'
@@ -328,6 +328,8 @@ export async function GET(
                 followUpClosedBy: l.followUpClosedBy,
                 pairMode: l.pairMode,
                 pairCostCaseId: l.pairCostCaseId,
+                carriedFromLineId: l.carriedFromLineId,
+                carriedFromMonth: l.carriedFromMonth,
                 system: systemView(l.matchedDocumentId, l.matchedLineId),
               })),
             }
@@ -427,6 +429,15 @@ export async function DELETE(
     })
     return r
   })
+
+  // ★ 2026-10-11：作廢月結單 → 佢「計入下個月」嘅行唔再係來源 → 下個月未確認分段即刻同步
+  if (doc.kind === 'STATEMENT') {
+    const secIds = await prisma.labStatementSection
+      .findMany({ where: { documentId: id }, select: { id: true } })
+      .then((xs) => xs.map((x) => x.id))
+      .catch(() => [] as string[])
+    await afterCarryChange(prisma, { sectionIds: secIds }, session.userId)
+  }
 
   return jsonNoStore({ document: { id: updated.id, status: updated.status, version: updated.version } })
 }

@@ -17,11 +17,12 @@
  */
 import { matchStatementToCosts, lineInScope, EXCLUDE_RESOLUTIONS, type CostCaseIn, type CostLineIn } from './statement-cost-match'
 import { labdocAudit } from './audit'
+import { syncCarriedLines, activeScopeSections, shiftMonth, type CarryScope } from './statement-carry'
 
 export type ReconcileClient = any // Prisma 或 tx client（同型 API）
 
 /** 對數時保留嘅行標記（其他舊 invoice 對法嘅標記會清走） */
-const KEEP_RESOLUTIONS = new Set(['STOCK', 'NOT_OURS', 'STATEMENT_WINS'])
+const KEEP_RESOLUTIONS = new Set(['STOCK', 'NOT_OURS', 'STATEMENT_WINS', 'NEXT_MONTH'])
 
 export interface ReconcileArgs {
   sectionId: string
@@ -73,6 +74,9 @@ export async function reconcileSection(
   client: ReconcileClient,
   args: ReconcileArgs,
 ): Promise<ReconcileSuccess | ReconcileFailure> {
+  // 0. ★ 2026-10-11：同步「上月結轉」副本（已確認分段唔郁）
+  await syncCarriedLines(client, args.sectionId)
+
   // 1. 讀
   const section = await client.labStatementSection.findUnique({
     where: { id: args.sectionId },
@@ -103,6 +107,8 @@ export async function reconcileSection(
     resolution: l.resolution && KEEP_RESOLUTIONS.has(l.resolution) ? l.resolution : null,
     pairMode: l.pairMode ?? null,
     pairCostCaseId: l.pairCostCaseId ?? null,
+    docNo: l.docNo ?? null,
+    carriedFromLineId: l.carriedFromLineId ?? null,
   }))
 
   // 2. 成本錄入
@@ -146,6 +152,9 @@ export async function reconcileSection(
     totalsOk: m.status === 'OK',
     stockTotal: m.stockTotal,
     notOursTotal: m.notOursTotal,
+    nextMonthTotal: m.nextMonthTotal,
+    carryInTotal: m.carryInTotal,
+    carryDuplicateLineIds: m.carryDuplicateLineIds,
     unpricedCount: m.unpricedCount,
     readCheck: m.readCheck,
     pairs: m.pairs,
@@ -221,6 +230,8 @@ export async function reconcileSection(
         delta: m.diff,
         stockTotal: m.stockTotal,
         notOursTotal: m.notOursTotal,
+        nextMonthTotal: m.nextMonthTotal,
+        carryInTotal: m.carryInTotal,
         costCount: costs.length,
         pairs: m.pairs.length,
         counts,
@@ -325,4 +336,71 @@ export async function statementCostSummary(
   statementTotal = r2(statementTotal)
   costTotal = r2(costTotal)
   return { statementTotal, costTotal, diff: r2(statementTotal - costTotal), stockTotal: r2(stockTotal), uncovered }
+}
+
+/**
+ * ★ 2026-10-11：「計入下個月」有改動（標／取消／作廢／取代／改分段基礎）→ 下個月（同 Lab＋診所＋醫生）
+ * 未確認分段即刻重新同步＋對數，總數唔會停喺舊數；鏈落去（再下個月）都一齊（最多 12 層）。
+ * best-effort：失敗只 log（下次對數／確認前會再同步）。
+ */
+export async function reconcileCarryTargets(
+  client: ReconcileClient,
+  scopes: Array<Partial<CarryScope> | null | undefined>,
+  actorId: string | null,
+  depth = 0,
+): Promise<void> {
+  if (depth >= 12) return
+  const seen = new Set<string>()
+  for (const sc of scopes) {
+    if (!sc?.labId || !sc.clinicId || !sc.providerId || !sc.month) continue
+    const next = shiftMonth(sc.month, 1)
+    const key = `${sc.labId}|${sc.clinicId}|${sc.providerId}|${next}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    let targets: Array<{ id: string; status: string }> = []
+    try {
+      targets = await activeScopeSections(client, { labId: sc.labId, clinicId: sc.clinicId, providerId: sc.providerId, month: next })
+    } catch (e) {
+      console.error('[labdoc] carry targets read failed', e)
+      continue
+    }
+    let touched = false
+    for (const t of targets) {
+      if (t.status === 'CONFIRMED') continue
+      const r = await autoReconcileIfReady(client, t.id, actorId, 'auto', '[labdoc:carry]')
+      if (r) touched = true
+    }
+    if (touched) await reconcileCarryTargets(client, [{ ...sc, month: next }], actorId, depth + 1)
+  }
+}
+
+/** 分段 → 結轉範圍（Lab＋診所＋醫生＋月）；未齊回 null。 */
+export async function sectionCarryScopes(client: ReconcileClient, sectionIds: string[]): Promise<Array<CarryScope | null>> {
+  if (sectionIds.length === 0) return []
+  const secs: any[] = await client.labStatementSection.findMany({
+    where: { id: { in: sectionIds } },
+    select: { clinicId: true, providerId: true, document: { select: { labId: true, statementMonth: true } } },
+  })
+  return secs.map((s) =>
+    s.clinicId && s.providerId && s.document?.labId && s.document?.statementMonth
+      ? { labId: s.document.labId, clinicId: s.clinicId, providerId: s.providerId, month: s.document.statementMonth }
+      : null,
+  )
+}
+
+/**
+ * 改動已經寫入之後叫：下個月結轉同步（best-effort，永遠唔 throw — 唔可以令已成功嘅寫入變 500）。
+ * 下次對數／確認前 reconcileSection 都會再同步，所以呢度失敗只係遲啲更新。
+ */
+export async function afterCarryChange(
+  client: ReconcileClient,
+  opts: { sectionIds?: string[]; scopes?: Array<CarryScope | null> },
+  actorId: string | null,
+): Promise<void> {
+  try {
+    const scopes = [...(opts.scopes ?? []), ...(opts.sectionIds?.length ? await sectionCarryScopes(client, opts.sectionIds) : [])]
+    await reconcileCarryTargets(client, scopes, actorId)
+  } catch (e) {
+    console.error('[labdoc] carry re-sync failed', e)
+  }
 }

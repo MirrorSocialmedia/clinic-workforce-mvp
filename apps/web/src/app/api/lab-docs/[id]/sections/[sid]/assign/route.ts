@@ -23,7 +23,8 @@ import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { jsonNoStore } from '@/lib/api-response'
 import { normClinicName, normCustomerNo, normDoctor } from '@/lib/labdoc/identify'
 import { labdocAudit } from '@/lib/labdoc/audit'
-import { autoReconcileIfReady, reconcileSection } from '@/lib/labdoc/statement-reconcile'
+import { autoReconcileIfReady, reconcileSection, afterCarryChange, sectionCarryScopes } from '@/lib/labdoc/statement-reconcile'
+import { sectionsCarryLocked, CARRY_LOCKED_MSG } from '@/lib/labdoc/statement-carry'
 import { resetSectionMatching, sectionsWithSystemChange, SYSTEM_CHANGE_BLOCK_MSG } from '@/lib/labdoc/statement-reset'
 import { labdocScope, kioskDocGuard } from '@/lib/labdoc/kiosk-scope'
 
@@ -110,6 +111,11 @@ export async function POST(req: NextRequest, { params }: { params: { id: string;
   if (resetMatching && (await sectionsWithSystemChange(prisma, [section.id])) > 0) {
     return jsonNoStore({ error: SYSTEM_CHANGE_BLOCK_MSG }, { status: 409 })
   }
+  // ★ 2026-10-11：有「計入下個月」已經喺下個月（已確認）計咗 → 唔准改診所／醫生
+  if (resetMatching && (await sectionsCarryLocked(prisma, [section.id])) > 0) {
+    return jsonNoStore({ error: CARRY_LOCKED_MSG }, { status: 409 })
+  }
+  const oldScopes = resetMatching ? await sectionCarryScopes(prisma, [section.id]) : []
 
   const ip = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? null
   const ua = req.headers.get('user-agent') ?? null
@@ -153,6 +159,8 @@ export async function POST(req: NextRequest, { params }: { params: { id: string;
     // 成段都係備貨 → 唔使診所／醫生都對得到數（0 = 0）；其他情況 reconcile 回 NEEDS_ASSIGN，分段照留未識別
     const rr = await reconcileSection(prisma, { sectionId: params.sid, actorId: session.userId, source: 'manual', ipAddress: ip, userAgent: ua }).catch(() => null)
     const st = rr && rr.ok ? rr.sectionStatus : 'NEEDS_ASSIGN'
+    // ★ 2026-10-11：舊範圍嘅下個月結轉即刻同步（呢段嘅「計入下個月」已清）
+    await afterCarryChange(prisma, { scopes: oldScopes }, session.userId)
     return NextResponse.json({ ok: true, id: params.sid, clinicId: null, providerId: null, status: st, documentStatus: docStatus, aliasesWritten: [] })
   }
   const aliasesWritten: Array<{ type: string; rawNorm: string; targetId: string; prevTargetId: string | null }> = []
@@ -295,5 +303,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string;
   if (complete) {
     await autoReconcileIfReady(prisma, params.sid, session.userId, 'auto', '[labdoc:assign]')
   }
+  // ★ 2026-10-11：舊範圍嘅下個月結轉即刻同步
+  if (resetMatching) await afterCarryChange(prisma, { scopes: oldScopes }, session.userId)
   return NextResponse.json({ ok: true, id: params.sid, clinicId: finalClinic, providerId: finalProvider, status: complete ? 'PENDING' : section.status, documentStatus: upd, aliasesWritten })
 }

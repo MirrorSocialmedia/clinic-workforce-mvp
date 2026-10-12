@@ -9,6 +9,7 @@
  * - 右：成本錄入（同 Lab、同診所、同醫生、到貨日喺同月）
  * - 按金額劃埋（一筆成本 = 一行或者連續幾行）只係幫你搵差異，唔影響狀態
  * - 2026-10-11：劃唔到 → 「手動配對成本」（揀幾行配一筆成本，要啱數）；劃錯 → 「未配對到」拆開
+ * - 2026-10-11：$0 行預設摺埋；「計入下個月」（本月唔計，下個月自動帶入「上月結轉」，單號重複唔計兩次）
  * - 確認：一致直接確認；有差異要寫原因
  */
 
@@ -28,14 +29,24 @@ interface CostResult {
   diff?: number
   stockTotal?: number
   notOursTotal?: number
+  nextMonthTotal?: number
+  carryInTotal?: number
+  carryDuplicateLineIds?: string[]
   unpricedCount?: number
   readCheck?: { stated: number; linesSum: number; ok: boolean } | null
   pairs?: Array<{ costCaseId: string; lineIds: string[]; manual?: boolean }>
   costs?: CostSnap[]
 }
 
-const MARK_LABEL: Record<string, string> = { STOCK: '備貨', NOT_OURS: '唔關我哋事', STATEMENT_WINS: '以月結單為準（舊）' }
+const MARK_LABEL: Record<string, string> = { STOCK: '備貨', NOT_OURS: '唔關我哋事', NEXT_MONTH: '計入下個月', STATEMENT_WINS: '以月結單為準（舊）' }
+/** 'YYYY-MM' → 'M 月' */
+const monthLabel = (m: string | null | undefined) => (m && /^\d{4}-\d{2}$/.test(m) ? `${Number(m.slice(5))} 月` : '上個月')
 const COUNTED_TYPES = new Set(['INVOICE', 'CREDIT', 'CHARGE'])
+
+/** $0 而且冇標記嘅行（摺埋） */
+function isZeroLine(l: StmtLine): boolean {
+  return Math.abs(l.amount) < 0.001 && !l.resolution
+}
 
 /** 月結單冇印數量 → 金額 ÷ 單價（整除先用） */
 function qtyOf(l: StmtLine): number | null {
@@ -53,6 +64,8 @@ export default function StatementSection({ id, sid }: { id: string; sid: string 
   const [reason, setReason] = useState('')
   // 手動配對面板：由邊行開（預先剔咗）
   const [pairFrom, setPairFrom] = useState<string | null>(null)
+  // $0 行預設摺埋
+  const [showZero, setShowZero] = useState(false)
 
   const load = useCallback(async () => {
     try {
@@ -83,6 +96,11 @@ export default function StatementSection({ id, sid }: { id: string; sid: string 
   if (!s) return <div className="max-w-5xl mx-auto p-4 text-sm">分段唔存在</div>
 
   const confirmed = s.status === 'CONFIRMED'
+  // 上月結轉副本另外列；$0 行（冇標記）預設摺埋
+  const carried = s.lines.filter((l) => !!l.carriedFromLineId)
+  const native = s.lines.filter((l) => !l.carriedFromLineId)
+  const zeroCount = native.filter(isZeroLine).length
+  const carryDup = new Set(rj.carryDuplicateLineIds ?? [])
   const st = SECTION_STATUS[s.status] ?? { label: s.status, cls: '' }
   const costs = rj.costs ?? []
   const costById = new Map(costs.map((c) => [c.id, c]))
@@ -180,12 +198,16 @@ export default function StatementSection({ id, sid }: { id: string; sid: string 
         <div className="p-3">
           <div className="text-xs text-muted-foreground">月結單</div>
           <div className="text-lg font-semibold tabular-nums">{costed ? fmtMoney(rj.statementTotal) : '—'}</div>
-          {((rj.stockTotal ?? 0) !== 0 || (rj.notOursTotal ?? 0) !== 0) && (
+          {((rj.stockTotal ?? 0) !== 0 || (rj.notOursTotal ?? 0) !== 0 || (rj.nextMonthTotal ?? 0) !== 0) && (
             <div className="text-[11px] text-muted-foreground">
               {(rj.stockTotal ?? 0) !== 0 && <>備貨 {fmtMoney(rj.stockTotal)} </>}
               {(rj.notOursTotal ?? 0) !== 0 && <>唔關我哋事 {fmtMoney(rj.notOursTotal)} </>}
+              {(rj.nextMonthTotal ?? 0) !== 0 && <>計入下個月 {fmtMoney(rj.nextMonthTotal)} </>}
               唔計
             </div>
+          )}
+          {(rj.carryInTotal ?? 0) !== 0 && (
+            <div className="text-[11px] text-blue-700">含上月結轉 {fmtMoney(rj.carryInTotal)}</div>
           )}
         </div>
         <div className="p-3">
@@ -213,12 +235,28 @@ export default function StatementSection({ id, sid }: { id: string; sid: string 
       <div className="grid md:grid-cols-2 gap-3">
         {/* 月結單 */}
         <div className="rounded-xl border bg-card min-w-0">
-          <div className="px-3 py-2 border-b text-xs font-medium text-muted-foreground">月結單（{s.lines.length} 行）</div>
+          {carried.length > 0 && (
+            <>
+              <div className="px-3 py-2 border-b text-xs font-medium text-blue-700 bg-blue-50">上月結轉（{carried.length} 行）</div>
+              <div className="divide-y border-b">
+                {carried.map((l) => (
+                  <LineRow key={l.id} docId={id} sid={sid} l={l} cost={lineToCost.has(l.id) ? costById.get(lineToCost.get(l.id)!) ?? null : null} editable={editable} onChanged={load} onPair={() => setPairFrom(l.id)} carryDup={carryDup.has(l.id)} month={data.document.statementMonth} />
+                ))}
+              </div>
+            </>
+          )}
+          <div className="px-3 py-2 border-b text-xs font-medium text-muted-foreground">月結單（{native.length} 行{zeroCount > 0 ? ` · ${native.length - zeroCount} 行要計` : ''}）</div>
           <div className="divide-y">
-            {s.lines.map((l) => (
-              <LineRow key={l.id} docId={id} sid={sid} l={l} cost={lineToCost.has(l.id) ? costById.get(lineToCost.get(l.id)!) ?? null : null} editable={editable} onChanged={load} onPair={() => setPairFrom(l.id)} />
+            {native.filter((l) => showZero || !isZeroLine(l)).map((l) => (
+              <LineRow key={l.id} docId={id} sid={sid} l={l} cost={lineToCost.has(l.id) ? costById.get(lineToCost.get(l.id)!) ?? null : null} editable={editable} onChanged={load} onPair={() => setPairFrom(l.id)} carryDup={false} month={data.document.statementMonth} />
             ))}
-            {s.lines.length === 0 && <div className="p-3 text-sm text-muted-foreground">冇行</div>}
+            {zeroCount > 0 && (
+              <button onClick={() => setShowZero((v) => !v)} className="w-full px-3 py-2 text-left text-xs text-brand bg-muted/40 flex justify-between">
+                <span>{showZero ? `收埋 ${zeroCount} 行 $0` : `＋ ${zeroCount} 行 $0（3D 列印模型、替代體等，唔計）`}</span>
+                <span>{showZero ? '收埋' : '撳開睇'}</span>
+              </button>
+            )}
+            {native.length === 0 && <div className="p-3 text-sm text-muted-foreground">冇行</div>}
           </div>
         </div>
 
@@ -297,7 +335,7 @@ export default function StatementSection({ id, sid }: { id: string; sid: string 
   )
 }
 
-function LineRow({ docId, sid, l, cost, editable, onChanged, onPair }: {
+function LineRow({ docId, sid, l, cost, editable, onChanged, onPair, carryDup, month }: {
   docId: string
   sid: string
   l: StmtLine
@@ -305,11 +343,15 @@ function LineRow({ docId, sid, l, cost, editable, onChanged, onPair }: {
   editable: boolean
   onChanged: () => void
   onPair: () => void
+  /** 上月結轉副本，但本月月結單已經有同一個單號 → 唔計 */
+  carryDup: boolean
+  /** 本月（'YYYY-MM'） */
+  month: string | null
 }) {
   const [open, setOpen] = useState(false)
   const [note, setNote] = useState('')
   const [busy, setBusy] = useState(false)
-  const counted = COUNTED_TYPES.has(l.lineType) && l.result !== 'NOT_APPLICABLE'
+  const counted = COUNTED_TYPES.has(l.lineType) && l.result !== 'NOT_APPLICABLE' && !carryDup
   const marked = l.resolution && MARK_LABEL[l.resolution]
   const q = qtyOf(l)
   const manual = l.pairMode === 'MANUAL' && !!cost
@@ -333,7 +375,8 @@ function LineRow({ docId, sid, l, cost, editable, onChanged, onPair }: {
     }
   }
 
-  const mark = async (resolution: 'STOCK' | 'NOT_OURS' | 'CLEAR') => {
+  const nextLabel = month && /^\d{4}-\d{2}$/.test(month) ? `${(Number(month.slice(5)) % 12) + 1} 月` : '下個月'
+  const mark = async (resolution: 'STOCK' | 'NOT_OURS' | 'NEXT_MONTH' | 'CLEAR') => {
     if (resolution === 'NOT_OURS' && !note.trim()) { toast.error('「唔關我哋事」要寫原因'); return }
     setBusy(true)
     try {
@@ -342,7 +385,7 @@ function LineRow({ docId, sid, l, cost, editable, onChanged, onPair }: {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ resolution, note: note.trim() || null }),
       })
-      toast.success(resolution === 'CLEAR' ? '已取消標記' : '已標記')
+      toast.success(resolution === 'CLEAR' ? '已取消標記' : resolution === 'NEXT_MONTH' ? `已計入${nextLabel}` : '已標記')
       setOpen(false)
       setNote('')
       onChanged()
@@ -369,9 +412,16 @@ function LineRow({ docId, sid, l, cost, editable, onChanged, onPair }: {
         </div>
         <span className="tabular-nums">{fmtMoney(l.amount)}</span>
       </div>
+      {l.carriedFromLineId && (
+        <div className="mt-0.5 text-[11px] text-blue-700">由 {monthLabel(l.carriedFromMonth)}月結單帶過嚟</div>
+      )}
       <div className="mt-1 flex flex-wrap items-center gap-2 text-xs">
-        {marked ? (
-          <span className="px-1.5 rounded bg-slate-100">{marked}{l.resolutionNote ? `：${l.resolutionNote}` : ''}</span>
+        {carryDup ? (
+          <span className="px-1.5 rounded bg-amber-50 text-amber-700">本月月結單已經有呢張單（單號 {l.docNoRaw ?? l.docNo ?? '—'}）— 唔再計</span>
+        ) : marked ? (
+          <span className={`px-1.5 rounded ${l.resolution === 'NEXT_MONTH' ? 'bg-blue-50 text-blue-700' : 'bg-slate-100'}`}>
+            {l.resolution === 'NEXT_MONTH' ? `計入${nextLabel}` : marked}{l.resolutionNote ? `：${l.resolutionNote}` : ''}
+          </span>
         ) : !counted ? (
           <span>唔計</span>
         ) : cost ? (
@@ -379,8 +429,8 @@ function LineRow({ docId, sid, l, cost, editable, onChanged, onPair }: {
         ) : l.result === 'UNPAIRED' ? (
           <span className="text-amber-700">{noAuto ? '未配對到（唔自動劃）' : '成本錄入冇對到呢個金額'}</span>
         ) : null}
-        {editable && COUNTED_TYPES.has(l.lineType) && (Math.abs(l.amount) > 0.001 || !!l.resolution) && !open && l.resolution !== 'STATEMENT_WINS' && (
-          l.resolution === 'STOCK' || l.resolution === 'NOT_OURS'
+        {editable && !carryDup && COUNTED_TYPES.has(l.lineType) && (Math.abs(l.amount) > 0.001 || !!l.resolution) && !open && l.resolution !== 'STATEMENT_WINS' && (
+          l.resolution === 'STOCK' || l.resolution === 'NOT_OURS' || l.resolution === 'NEXT_MONTH'
             ? <button className="underline" disabled={busy} onClick={() => mark('CLEAR')}>取消標記</button>
             : <button className="underline text-brand" onClick={() => setOpen(true)}>標記</button>
         )}
@@ -401,6 +451,9 @@ function LineRow({ docId, sid, l, cost, editable, onChanged, onPair }: {
             ) : l.result === 'UNPAIRED' ? (
               <button disabled={busy} onClick={() => { setOpen(false); onPair() }} className="px-3 py-1 rounded-lg border border-brand text-brand font-medium">手動配對成本</button>
             ) : null}
+            {!manual && (!l.agingBucket || l.agingBucket === 'CURRENT') && (
+              <button disabled={busy} onClick={() => mark('NEXT_MONTH')} className="px-3 py-1 rounded-lg border border-brand text-brand font-medium">計入{nextLabel}</button>
+            )}
             {!manual && <button disabled={busy} onClick={() => mark('STOCK')} className="px-3 py-1 rounded-lg bg-brand text-white">備貨（唔屬病人）</button>}
             {!manual && <button disabled={busy} onClick={() => mark('NOT_OURS')} className="px-3 py-1 rounded-lg border bg-card">唔關我哋事</button>}
             {noAuto && !cost && <button disabled={busy} onClick={() => pairOp('AUTO')} className="px-3 py-1 rounded-lg border bg-card">恢復自動配對</button>}
