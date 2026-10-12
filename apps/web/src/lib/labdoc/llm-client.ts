@@ -5,7 +5,8 @@
  * （AES-256-GCM，AAD = v|kid|ts|nonce|context 五元綁定）；
  * REQ_CONTEXT = "labdoc-extract.v1"，回應 respContext(nonce)（同 W route 逐字一致）。
  *
- * 時限：client 每次 fetch 時限預設 270 秒（env LABDOC_CLIENT_TIMEOUT_MS）；W 側 LLM 預設 240 秒。
+ * 時限：client 每次 fetch 時限預設 750 秒（env LABDOC_CLIENT_TIMEOUT_MS）；W 側 LLM 預設 720 秒。
+ *   ★ 2026-10-12：W 側輸出上限 ×3（max_tokens 8192 → 24576，一頁好多行嘅月結單寫唔晒 → truncated）→ 時限都 ×3（270s → 750s）。
  *   ★ 2026-10-11：原本 95 秒（W 85s < CWM 95s < Cloudflare 100s）— 40 幾行嘅月結單 85s 寫唔完。
  *   而家 W route 用 keep-alive streaming（先回 200＋每 15s 一個空格，最後先送 sealed JSON），
  *   Cloudflare 100s 只限「冇 byte」時間 → 可以等長啲。res.json() 照解（JSON 前置空白合法）。
@@ -29,8 +30,8 @@ import { seal, open, respContext, type Envelope } from '../clinical/llm-envelope
 import type { LabDocResult } from './schema'
 
 export const REQ_CONTEXT_LABDOC = 'labdoc-extract.v1'
-/** CWM client 每次 fetch 時限（要大過 W 側 LABDOC_LLM_TIMEOUT_MS 240s）— 預設 270 秒 */
-export const LABDOC_CLIENT_TIMEOUT_MS = Math.max(30_000, Number(process.env.LABDOC_CLIENT_TIMEOUT_MS ?? 270_000) || 270_000)
+/** CWM client 每次 fetch 時限（要大過 W 側 LABDOC_LLM_TIMEOUT_MS 720s）— 預設 750 秒 */
+export const LABDOC_CLIENT_TIMEOUT_MS = Math.max(30_000, Number(process.env.LABDOC_CLIENT_TIMEOUT_MS ?? 750_000) || 750_000)
 /** 429 重試間隔上限（跟 clinical：cap 10 秒） */
 const BUSY_SLEEP_CAP_MS = 10_000
 /** 預設最多打 proxy 嘅次數（caller 可傳；runner 用 3 = §5.1 三次失敗先 EXTRACT_FAILED） */
