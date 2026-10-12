@@ -40,6 +40,16 @@ export async function GET(
   const adjustments = await prisma.payoutAdjustment.findMany({
     where: { runId: params.id },
   })
+  // ★ cwm-adjedit-20261013：草稿月結單（解鎖後）存嘅 adjustAmount 係生成嗰陣嘅數；調整之後可以被改／刪／新增
+  //   → 回傳即場數，頁面唔夾就提示「重新生成」（鎖定嘅月結單讀快照，唔受影響）
+  let liveAdjustAmount: number | null = null
+  if (run.status !== 'LOCKED') {
+    const live = await prisma.payoutAdjustment.aggregate({
+      where: { providerId: run.providerId, periodMonth: run.periodMonth, runId: null, ...(run.clinicId ? { clinicId: run.clinicId } : {}) },
+      _sum: { amount: true },
+    })
+    liveAdjustAmount = Math.round(Number(live._sum.amount ?? 0) * 100) / 100
+  }
 
   return NextResponse.json({
     run: {
@@ -57,6 +67,7 @@ export async function GET(
       spSubsidy: Number(run.spSubsidy),
       refAmount: Number(run.refAmount),
       adjustAmount: Number(run.adjustAmount),
+      liveAdjustAmount,
       totalAmount: Number(run.totalAmount),
       adjustments: adjustments.map((a: any) => ({
         ...a,

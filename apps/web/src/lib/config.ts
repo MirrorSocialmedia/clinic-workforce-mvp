@@ -460,6 +460,8 @@ export const CONFIG = {
     // ★ D2: Payout adjustments
     'GET /api/payout-adjustments': ['OWNER'], // ★ cwm-adjlist-20261012：之前嘅手動調整記錄
     'POST /api/payout-adjustments': ['OWNER'],
+    'PUT /api/payout-adjustments/:id': ['OWNER'], // ★ cwm-adjedit-20261013：改／刪（只限未入月結）
+    'DELETE /api/payout-adjustments/:id': ['OWNER'],
     // —— 醫生時間表「立即同步」（cw-pta 2026-08-21）——
     // route 行 requirePerm('scheduling')（真正把關）；呢度係角色白名單登記。
     // 冇 scheduling 嘅角色（純 ACCOUNTANT / EMPLOYEE / KIOSK）要 grant 先入得去。
@@ -792,6 +794,8 @@ export const RBAC_PERM_OVERRIDES: Record<string, string[]> = {
   // ★ D2: Payout adjustments
   'GET /api/payout-adjustments': ['provider_payout'], // ★ cwm-adjlist-20261012
   'POST /api/payout-adjustments': ['provider_payout'],
+  'PUT /api/payout-adjustments/:id': ['provider_payout'], // ★ cwm-adjedit-20261013
+  'DELETE /api/payout-adjustments/:id': ['provider_payout'],
   // ★ cwm-labdoc P1：Lab 單據 — §10.2：上傳、檔案庫、睇檔／下載原檔 = lab_invoice ✅ lab_statement ✅
   'POST /api/lab-docs/upload': ['lab_invoice', 'lab_statement'],
   'GET /api/lab-docs': ['lab_invoice', 'lab_statement'],

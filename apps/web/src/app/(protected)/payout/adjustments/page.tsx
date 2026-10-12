@@ -4,13 +4,14 @@
  * T1: Payout Adjustment Entry — 手動調整錄入
  * OWNER / provider_payout 權限
  * ★ 2026-08-17: 加 clinicId 必填 — 每筆調整必須綁定診所
+ * ★ cwm-adjedit-20261013: 錄錯可以改／刪（只限未入月結；已入月結要先解鎖刪草稿，或者下期加反向調整）
  */
 import { useCallback, useEffect, useState } from 'react'
 import { apiFetch } from '@/lib/api-client'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
-import { Plus, ArrowLeft } from 'lucide-react'
+import { Plus, ArrowLeft, Pencil, Trash2, Save } from 'lucide-react'
 import { hasPermission } from '@/lib/permissions'
 
 export default function AdjustmentsPage() {
@@ -24,7 +25,7 @@ export default function AdjustmentsPage() {
   const canPayout = userRole ? hasPermission(userRole, 'provider_payout', grant, deny) : false
 
   // Form state
-  const [form, setForm] = useState({
+  const EMPTY_FORM = {
     providerId: '',
     clinicId: '',
     periodMonth: '',
@@ -33,7 +34,46 @@ export default function AdjustmentsPage() {
     refCode: '',
     amount: '',
     note: '',
-  })
+  }
+  const [form, setForm] = useState(EMPTY_FORM)
+  // ★ cwm-adjedit-20261013：editingId = 正在改邊筆（null = 新增）
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [busyId, setBusyId] = useState<string | null>(null)
+
+  function startEdit(r: AdjRow) {
+    setEditingId(r.id)
+    setForm({
+      providerId: r.providerId,
+      clinicId: r.clinicId || '',
+      periodMonth: r.periodMonth,
+      sourceMonth: r.sourceMonth && r.sourceMonth !== r.periodMonth ? r.sourceMonth : '',
+      reason: r.reason,
+      refCode: r.refCode || '',
+      amount: String(r.amount),
+      note: r.note || '',
+    })
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+  function cancelEdit() {
+    setEditingId(null)
+    setForm(EMPTY_FORM)
+  }
+
+  async function handleDelete(r: AdjRow) {
+    const amt = `${r.amount < 0 ? '−' : '+'}$${Math.abs(r.amount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+    if (!confirm(`確定刪除呢筆調整？\n\n${r.periodMonth} · ${r.providerName} · ${r.clinicName}\n${REASON_LABEL[r.reason] ?? r.reason} ${amt}${r.note ? `\n${r.note}` : ''}\n\n刪除後醫生月結預覽會即刻唔再計呢筆。`)) return
+    setBusyId(r.id)
+    try {
+      await apiFetch(`/api/payout-adjustments/${r.id}`, { method: 'DELETE' })
+      if (editingId === r.id) cancelEdit()
+      loadList()
+    } catch (e: any) {
+      alert(`刪除失敗: ${e.message}`)
+      loadList()
+    } finally {
+      setBusyId(null)
+    }
+  }
 
   // ★ cwm-adjlist-20261012：之前嘅手動調整記錄（預設全部最近 200 筆；可篩月份／醫生／診所）
   const [rows, setRows] = useState<AdjRow[]>([])
@@ -106,8 +146,8 @@ export default function AdjustmentsPage() {
     }
     setSaving(true)
     try {
-      await apiFetch('/api/payout-adjustments', {
-        method: 'POST',
+      await apiFetch(editingId ? `/api/payout-adjustments/${editingId}` : '/api/payout-adjustments', {
+        method: editingId ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           providerId: form.providerId,
@@ -120,14 +160,13 @@ export default function AdjustmentsPage() {
           note: form.note || '',
         }),
       })
-      setForm({
-        providerId: '', clinicId: '', periodMonth: '', sourceMonth: '',
-        reason: '', refCode: '', amount: '', note: '',
-      })
-      alert('調整記錄已新增')
+      setForm(EMPTY_FORM)
+      alert(editingId ? '調整記錄已修改' : '調整記錄已新增')
+      setEditingId(null)
       loadList()
     } catch (e: any) {
       alert(`提交失敗: ${e.message}`)
+      if (editingId) loadList()
     } finally {
       setSaving(false)
     }
@@ -148,8 +187,13 @@ export default function AdjustmentsPage() {
       <h1 className="text-2xl font-bold mb-6">手動調整錄入</h1>
 
       {/* Form */}
-      <Card className="p-4 mb-6">
-        <h2 className="font-semibold mb-3">新增調整</h2>
+      <Card className={`p-4 mb-6 ${editingId ? 'ring-2 ring-amber-400' : ''}`}>
+        <h2 className="font-semibold mb-3">{editingId ? '✏️ 修改調整' : '新增調整'}</h2>
+        {editingId && (
+          <div className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded px-3 py-2 mb-3">
+            你而家改緊下面記錄表入面一筆調整。儲存後醫生月結預覽會即刻用新數。
+          </div>
+        )}
         <form onSubmit={handleSubmit} className="space-y-3">
           <div className="grid grid-cols-2 gap-3">
             <div>
@@ -257,10 +301,15 @@ export default function AdjustmentsPage() {
           </div>
 
           {canPayout && (
-            <Button type="submit" disabled={saving}>
-              <Plus className="w-4 h-4 mr-1" />
-              {saving ? '提交中...' : '新增調整'}
-            </Button>
+            <div className="flex gap-2">
+              <Button type="submit" disabled={saving}>
+                {editingId ? <Save className="w-4 h-4 mr-1" /> : <Plus className="w-4 h-4 mr-1" />}
+                {saving ? '提交中...' : editingId ? '儲存修改' : '新增調整'}
+              </Button>
+              {editingId && (
+                <Button type="button" variant="outline" onClick={cancelEdit} disabled={saving}>取消修改</Button>
+              )}
+            </div>
           )}
         </form>
       </Card>
@@ -306,12 +355,13 @@ export default function AdjustmentsPage() {
                     <th className="py-1.5 pr-2 text-right">金額</th>
                     <th className="py-1.5 pr-2">單據／備註</th>
                     <th className="py-1.5 pr-2">月結</th>
-                    <th className="py-1.5">錄入</th>
+                    <th className="py-1.5 pr-2">錄入</th>
+                    {canPayout && <th className="py-1.5"></th>}
                   </tr>
                 </thead>
                 <tbody>
                   {rows.map(r => (
-                    <tr key={r.id} className="border-b last:border-0 align-top">
+                    <tr key={r.id} className={`border-b last:border-0 align-top ${editingId === r.id ? 'bg-amber-50' : ''}`}>
                       <td className="py-1.5 pr-2 whitespace-nowrap">
                         {r.periodMonth}
                         {r.sourceMonth && r.sourceMonth !== r.periodMonth && <div className="text-xs text-gray-500">原 {r.sourceMonth}</div>}
@@ -332,10 +382,26 @@ export default function AdjustmentsPage() {
                           : r.runStatus ? <span className="text-amber-700">草稿月結</span>
                           : <span className="text-gray-500">未入月結</span>}
                       </td>
-                      <td className="py-1.5 text-xs text-gray-500 whitespace-nowrap">
+                      <td className="py-1.5 pr-2 text-xs text-gray-500 whitespace-nowrap">
                         {r.createdByName}
                         <div>{new Date(r.createdAt).toLocaleString('zh-HK', { timeZone: 'Asia/Hong_Kong', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false })}</div>
                       </td>
+                      {canPayout && (
+                        <td className="py-1.5 whitespace-nowrap text-xs">
+                          {r.runStatus === null ? (
+                            <div className="flex gap-1">
+                              <button type="button" title="修改" aria-label="修改" disabled={busyId === r.id}
+                                className="inline-flex items-center gap-0.5 px-2 py-1 rounded border text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                                onClick={() => startEdit(r)}><Pencil className="w-3 h-3" />修改</button>
+                              <button type="button" title="刪除" aria-label="刪除" disabled={busyId === r.id}
+                                className="inline-flex items-center gap-0.5 px-2 py-1 rounded border border-red-200 text-red-700 hover:bg-red-50 disabled:opacity-50"
+                                onClick={() => handleDelete(r)}><Trash2 className="w-3 h-3" />{busyId === r.id ? '刪除中…' : '刪除'}</button>
+                            </div>
+                          ) : (
+                            <span className="text-gray-400" title="已入月結單：要先解鎖並刪除嗰張月結草稿，或者喺下期加一筆反向調整">已入月結，唔可以改</span>
+                          )}
+                        </td>
+                      )}
                     </tr>
                   ))}
                 </tbody>
