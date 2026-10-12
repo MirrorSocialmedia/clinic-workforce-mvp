@@ -3,11 +3,16 @@
 // ============================================================
 // ★ cwm-labstmtprog-20261012：Lab 單據 · 月結單 —— 某月逐間診所「已對／對數中／未對＋未收到」
 //   撳卡 = 下面列表只睇嗰間（再撳一次取消）。計法：lib/labdoc/statement-progress.ts
+// ★ 2026-10-12：逐項列「Lab · 醫生」未對（撳去嗰段）／未收到（按 Lab × 醫生）
 // ============================================================
 import { useEffect, useState } from 'react'
+import Link from 'next/link'
 import { apiFetch } from '@/lib/api-client'
+import { fmtMoney } from './status-meta'
 
-interface Row { clinicId: string; clinicName: string; reconciled: number; inProgress: number; open: number; missingLabs: string[] }
+interface Todo { kind: 'OPEN' | 'MISSING'; labName: string; providerName: string | null; docId: string | null; sectionId: string | null; diff: number | null }
+interface Row { clinicId: string; clinicName: string; reconciled: number; inProgress: number; open: number; missingLabs: string[]; todo?: Todo[] }
+const TODO_SHOW = 5
 interface Resp { month: string; clinics: Row[]; unassigned: number }
 
 export default function StatementProgressCards({ month, clinicNames, selected, onPick, reloadKey }: {
@@ -38,22 +43,26 @@ export default function StatementProgressCards({ month, clinicNames, selected, o
   const pct = (n: number, t: number) => (t > 0 ? `${Math.round((n / t) * 100)}%` : '0%')
   const sum = (k: 'reconciled' | 'inProgress' | 'open') => data.clinics.reduce((s, c) => s + c[k], 0)
   const all = { reconciled: sum('reconciled'), inProgress: sum('inProgress'), open: sum('open'), missing: data.clinics.reduce((s, c) => s + c.missingLabs.length, 0) }
-  const card = (key: string, title: string, c: { reconciled: number; inProgress: number; open: number }, missing: string[] | number, dashed = false) => {
+  const card = (key: string, title: string, c: { reconciled: number; inProgress: number; open: number }, missing: string[] | number, dashed = false, todo?: Todo[]) => {
     const total = c.reconciled + c.inProgress + c.open
     const missN = Array.isArray(missing) ? missing.length : missing
-    const left = c.inProgress + c.open + missN
+    // 有逐項就按項數（Lab × 醫生）；「全部」卡按份數
+    const left = todo ? todo.length : c.inProgress + c.open + missN
     const sel = key !== '' && selected === key
     return (
-      <button
+      <div
         key={key || 'all'}
+        className={`rounded-xl border-2 px-3 py-2 min-w-[170px] max-w-[320px] bg-card text-xs leading-relaxed ${dashed ? 'border-dashed' : ''} ${sel ? 'border-[#2f6b68] ring-2 ring-[#cfe5e3]' : 'border-border'}`}
+      >
+      <button
         type="button"
         onClick={() => key && onPick(sel ? '' : key)}
-        className={`text-left rounded-xl border-2 px-3 py-2 min-w-[170px] bg-card text-xs leading-relaxed ${dashed ? 'border-dashed cursor-default' : 'hover:bg-accent'} ${sel ? 'border-[#2f6b68] ring-2 ring-[#cfe5e3]' : 'border-border'}`}
+        className={`w-full text-left ${dashed ? 'cursor-default' : 'hover:opacity-80'}`}
         aria-pressed={sel}
       >
         <div className="flex items-baseline justify-between gap-2">
           <b className="text-sm">{title}</b>
-          {left === 0 ? <span className="text-green-700 font-semibold">✓ 全部已對</span> : <span className="text-amber-700 font-semibold">仲有 {left} 份</span>}
+          {left === 0 ? <span className="text-green-700 font-semibold">✓ 全部已對</span> : <span className="text-amber-700 font-semibold">仲有 {left} {todo ? '項' : '份'}</span>}
         </div>
         <div className="flex h-1.5 rounded-full overflow-hidden bg-muted my-1">
           <i className="block h-full bg-green-600" style={{ width: pct(c.reconciled, total) }} />
@@ -63,23 +72,43 @@ export default function StatementProgressCards({ month, clinicNames, selected, o
         <div>
           已對 {c.reconciled} · <span className="text-indigo-700">對數中 {c.inProgress}</span> · <span className="text-amber-700">未對 {c.open}</span>
         </div>
-        {missN > 0 && (
+        {!todo && missN > 0 && (
           <div className="text-red-700">
             未收到 {missN}{Array.isArray(missing) ? `：${missing.join('、')}` : ''}
           </div>
         )}
       </button>
+        {todo && todo.length > 0 && (
+          <div className="mt-1 pt-1 border-t border-dashed space-y-0.5">
+            {todo.slice(0, TODO_SHOW).map((t, i) => {
+              const label = `${t.labName} · ${t.providerName ?? (t.kind === 'OPEN' ? '未揀醫生' : '—')}`
+              const tag = t.kind === 'OPEN'
+                ? <span className="px-1.5 rounded bg-amber-50 text-amber-700 whitespace-nowrap">未對</span>
+                : <span className="px-1.5 rounded bg-red-50 text-red-700 whitespace-nowrap">未收到</span>
+              const extra = t.kind === 'OPEN' && t.diff ? ` · 差 ${fmtMoney(Math.abs(t.diff))}` : ''
+              const href = t.docId ? (t.sectionId ? `/lab-docs/statements/${t.docId}/sections/${t.sectionId}` : `/lab-docs/statements/${t.docId}`) : null
+              return (
+                <div key={i} className="flex items-baseline gap-1.5">
+                  {tag}
+                  {href ? <Link href={href} className="underline truncate">{label}{extra}</Link> : <span className="truncate">{label}</span>}
+                </div>
+              )
+            })}
+            {todo.length > TODO_SHOW && <div className="text-muted-foreground">仲有 {todo.length - TODO_SHOW} 項</div>}
+          </div>
+        )}
+      </div>
     )
   }
 
   return (
     <div className="space-y-1">
       <div className="flex flex-wrap gap-2" role="group" aria-label={`${month} 月結單逐間診所`}>
-        {data.clinics.map((c) => card(c.clinicId, clinicNames[c.clinicId] ?? c.clinicName, c, c.missingLabs))}
+        {data.clinics.map((c) => card(c.clinicId, clinicNames[c.clinicId] ?? c.clinicName, c, c.missingLabs, false, c.todo))}
         {data.clinics.length > 1 && card('', `全部（${all.reconciled + all.inProgress + all.open} 份）`, all, all.missing, true)}
       </div>
       <div className="text-[11px] text-muted-foreground">
-        已對 = 嗰間診所嘅段全部確認；對數中 = 確認咗部分；未對 = 未確認。未收到 = 嗰個月有 Lab 成本但冇嗰間 Lab 嘅月結單。
+        已對 = 嗰間診所嘅段全部確認；對數中 = 確認咗部分；未對 = 未確認（撳項目直接開嗰段）。未收到 = 嗰個月成本錄入有呢位醫生用呢間 Lab，但冇佢嘅月結單。
         {data.unassigned > 0 && <span className="text-amber-700">　另有 {data.unassigned} 份未知邊間診所（未分段）。</span>}
       </div>
     </div>

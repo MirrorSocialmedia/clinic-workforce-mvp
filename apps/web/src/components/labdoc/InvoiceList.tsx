@@ -161,6 +161,7 @@ export default function InvoiceList({ clinicNames, providerNames, kind = 'INVOIC
       if (fClinic) sp.set('clinicId', fClinic)
       if (/^\d{4}-\d{2}$/.test(fMonth)) sp.set('month', fMonth)
       if (isStmt && openOnly) sp.set('notReconciled', '1')
+      sp.set('excludeProcessing', '1') // 排隊／讀緊／讀唔到 → 列表頂「處理中」
       const data = await apiFetch<ListResp>(`/api/lab-docs?${sp.toString()}`)
       setItems(data.items)
       setTotal(data.total)
@@ -177,24 +178,29 @@ export default function InvoiceList({ clinicNames, providerNames, kind = 'INVOIC
     load(1)
   }, [load])
 
-  // ★ 2026-10-11：有單排緊隊／讀緊 → 每 5 秒刷新（位置會自己減）
-  const busyIds = items.filter((d) => d.status === 'UPLOADED' || d.status === 'EXTRACTING').map((d) => d.id).join(',')
+  // ★ 2026-10-11：「處理中」（排隊／讀緊／讀唔到）— 唔受月份／診所篩選（未讀完未知係邊個月）
+  const [processing, setProcessing] = useState<ListDoc[]>([])
+  const [reloadTick, setReloadTick] = useState(0)
+  const prevProcIds = useRef<string[]>([])
+  const loadProcessing = useCallback(async () => {
+    try {
+      const data = await apiFetch<ListResp>(`/api/lab-docs?kind=${kind}&status=UPLOADED,EXTRACTING,EXTRACT_FAILED`)
+      const ids = data.items.map((d) => d.id)
+      // 有單讀完（由「處理中」走咗）→ 主列表＋卡片要更新
+      if (prevProcIds.current.some((id) => !ids.includes(id))) setReloadTick((x) => x + 1)
+      prevProcIds.current = ids
+      setProcessing(data.items)
+    } catch { /* 下次再試 */ }
+  }, [kind])
+  useEffect(() => { loadProcessing() }, [loadProcessing])
+  useEffect(() => { if (reloadTick > 0) load(page) }, [reloadTick]) // eslint-disable-line react-hooks/exhaustive-deps
+  // 有單排緊隊／讀緊 → 每 5 秒刷新（位置會自己減）
+  const busyIds = processing.filter((d) => d.status === 'UPLOADED' || d.status === 'EXTRACTING').map((d) => `${d.id}:${d.status}:${d.queuePosition ?? ''}`).join(',')
   useEffect(() => {
     if (!busyIds) return
-    const t = setTimeout(async () => {
-      try {
-        const sp = new URLSearchParams({ kind, page: String(page) })
-        if (!showVoid) sp.set('hideVoid', '1')
-        if (fClinic) sp.set('clinicId', fClinic)
-        if (/^\d{4}-\d{2}$/.test(fMonth)) sp.set('month', fMonth)
-        if (isStmt && openOnly) sp.set('notReconciled', '1')
-        const data = await apiFetch<ListResp>(`/api/lab-docs?${sp.toString()}`)
-        setItems(data.items)
-        setTotal(data.total)
-      } catch { /* 下次再試 */ }
-    }, 5000)
+    const t = setTimeout(loadProcessing, 5000)
     return () => clearTimeout(t)
-  }, [busyIds, items, kind, page, showVoid, fClinic, fMonth, isStmt, openOnly])
+  }, [busyIds, processing, loadProcessing])
 
   const handleFiles = async (files: FileList | null, isPhoto: boolean) => {
     if (!files || files.length === 0) return
@@ -236,6 +242,7 @@ export default function InvoiceList({ clinicNames, providerNames, kind = 'INVOIC
         const n = (body.documents || []).length
         toast.success(isStmt ? '上傳成功：1 份月結單（讀緊）' : `上傳成功：${n} 單到貨單`)
         load(page)
+        loadProcessing()
       } else if (res.status === 409 && body.duplicateOf) {
         // §4.2：呢個檔已經喺 {日期} 由 {人} 上傳過 → 「去睇」= 直接開原本嗰張
         toast.warning(body.message || '重複檔案')
@@ -374,9 +381,31 @@ export default function InvoiceList({ clinicNames, providerNames, kind = 'INVOIC
         </label>
       </div>
 
+      {/* ★ 2026-10-11：處理中（排隊／讀緊／讀唔到）— 唔受篩選 */}
+      {processing.length > 0 && (
+        <div className="rounded-xl border bg-card overflow-hidden">
+          <div className="px-3 py-2 text-xs font-medium text-blue-700 bg-blue-50">處理中（{processing.length}）</div>
+          {processing.map((d) => {
+            const sm = queueMeta(d)
+            const failed = d.status === 'EXTRACT_FAILED'
+            return (
+              <button key={d.id} onClick={() => open(d.id)} className="w-full flex items-center justify-between gap-2 px-3 py-2 border-t text-sm text-left hover:bg-accent/50">
+                <span className="min-w-0">
+                  <span className="truncate block">{isStmt ? '月結單' : d.docNo ?? '到貨單'}（{d.pageCount} 頁）</span>
+                  <span className="block text-xs text-muted-foreground">上傳 {hkDateTime(d.uploadedAt)}{d.uploadedByName ? ` · ${d.uploadedByName}` : ''}</span>
+                </span>
+                <span className={`px-2 py-0.5 rounded-full text-xs font-medium whitespace-nowrap ${failed ? 'bg-red-50 text-red-700' : sm.cls}`}>
+                  {failed ? '讀唔到 · 撳入去再讀' : d.status === 'EXTRACTING' ? '讀取中' : sm.label}
+                </span>
+              </button>
+            )
+          })}
+        </div>
+      )}
+
       {/* ★ cwm-labstmtprog-20261012：月結單逐間診所已對／未對（撳卡 = 只睇嗰間） */}
       {isStmt && (
-        <StatementProgressCards month={fMonth} clinicNames={clinicNames} selected={fClinic} onPick={setFClinic} reloadKey={items.length + total} />
+        <StatementProgressCards month={fMonth} clinicNames={clinicNames} selected={fClinic} onPick={setFClinic} reloadKey={items.length + total + reloadTick} />
       )}
 
       {/* 手機：卡片 */}
