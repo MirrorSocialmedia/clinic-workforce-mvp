@@ -2119,8 +2119,12 @@ model LabStatementSection {
   resultJson    Json? // §8.2.5：最近一次 reconcile 結果快照（virtualLines／notOnStatement／counts／runAt）
   lines         LabStatementLine[]
 
+  // ★ 2026-10-12：同 Lab＋診所＋醫生＋月有兩份月結單（唔係重發）→ 後上傳嗰段指去前一段，兩份加埋一齊對（statement-combine.ts）
+  combineWithSectionId String?
+
   @@unique([documentId, sectionIndex])
   @@index([clinicId, providerId])
+  @@index([combineWithSectionId])
 }
 
 model LabStatementLine {

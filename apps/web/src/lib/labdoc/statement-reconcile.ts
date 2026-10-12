@@ -18,6 +18,7 @@
 import { matchStatementToCosts, lineInScope, EXCLUDE_RESOLUTIONS, type CostCaseIn, type CostLineIn } from './statement-cost-match'
 import { labdocAudit } from './audit'
 import { syncCarriedLines, activeScopeSections, shiftMonth, type CarryScope } from './statement-carry'
+import { sectionCombineGroup } from './statement-combine'
 
 export type ReconcileClient = any // Prisma 或 tx client（同型 API）
 
@@ -74,30 +75,43 @@ export async function reconcileSection(
   client: ReconcileClient,
   args: ReconcileArgs,
 ): Promise<ReconcileSuccess | ReconcileFailure> {
-  // 0. ★ 2026-10-11：同步「上月結轉」副本（已確認分段唔郁）
-  await syncCarriedLines(client, args.sectionId)
+  // ★ 2026-10-12：同 Lab＋診所＋醫生＋月「兩份加埋一齊對」→ 成組一齊對（statement-combine.ts）
+  const group = await sectionCombineGroup(client, args.sectionId)
+  const memberIds: string[] = group ? group.memberIds : [args.sectionId]
 
-  // 1. 讀
-  const section = await client.labStatementSection.findUnique({
-    where: { id: args.sectionId },
-    include: {
-      document: true,
-      lines: { orderBy: { lineIndex: 'asc' } },
-    },
-  })
+  // 0. ★ 2026-10-11：同步「上月結轉」副本（已確認分段唔郁）；組入面只會入主段
+  for (const id of memberIds) {
+    await syncCarriedLines(client, id, { carryInto: !group || id === group.primaryId })
+  }
+
+  // 1. 讀（組：全部成員）
+  const loaded: any[] = []
+  for (const id of memberIds) {
+    const sec = await client.labStatementSection.findUnique({
+      where: { id },
+      include: {
+        document: true,
+        lines: { orderBy: { lineIndex: 'asc' } },
+      },
+    })
+    if (sec) loaded.push(sec)
+  }
+  const section = loaded.find((x) => x.id === args.sectionId)
   if (!section) return { ok: false, code: 'NOT_FOUND', message: '分段唔存在' }
   const doc = section.document
   if (doc.kind !== 'STATEMENT') return { ok: false, code: 'NOT_STATEMENT', message: '唔係月結單' }
-  if (section.status === 'CONFIRMED') return { ok: false, code: 'CONFIRMED', message: '分段已確認' }
+  if (loaded.some((x) => x.status === 'CONFIRMED')) return { ok: false, code: 'CONFIRMED', message: '分段已確認' }
   if (!doc.labId) return { ok: false, code: 'NO_LAB', message: '月結單未揀 Lab — 返月結單頁撳「改 Lab／月份」揀咗先' }
   if (!doc.statementMonth) return { ok: false, code: 'NO_MONTH', message: '月結單未揀月份 — 返月結單頁撳「改 Lab／月份」揀咗先' }
+  const members = group ? loaded : [section]
 
   const profile = await client.labProfile.findUnique({ where: { labId: doc.labId } })
   const outstanding = profile?.statementKind === 'OUTSTANDING'
 
-  const lineIn: CostLineIn[] = section.lines.map((l: any) => ({
+  // 組：唔同份單嘅 lineIndex 會撞 → 加偏移保持「每份單自己嘅次序」（連續行配對靠次序）
+  const lineIn: CostLineIn[] = members.flatMap((sec: any, mi: number) => sec.lines.map((l: any) => ({
     id: l.id,
-    lineIndex: l.lineIndex,
+    lineIndex: mi * 1_000_000 + l.lineIndex,
     lineType: l.lineType,
     amount: Number(l.amount),
     qty: toNum(l.qty),
@@ -109,9 +123,9 @@ export async function reconcileSection(
     pairCostCaseId: l.pairCostCaseId ?? null,
     docNo: l.docNo ?? null,
     carriedFromLineId: l.carriedFromLineId ?? null,
-  }))
+  })))
 
-  // 2. 成本錄入
+  // 2. 成本錄入（組都係同一個範圍 → 只查一次、只計一次）
   const assigned = !!section.clinicId && !!section.providerId
   let costRows: any[] = []
   if (assigned) {
@@ -137,12 +151,27 @@ export async function reconcileSection(
   }))
 
   const costNote = new Map<string, string | null>(costRows.map((c) => [c.id, c.note ?? null]))
-  const statedTotal = outstanding ? toNum(section.statedCurrent) : toNum(section.statedTotal)
+  const statedOf = (sec: any) => (outstanding ? toNum(sec.statedCurrent) : toNum(sec.statedTotal))
+  // 組：每份都有印總數先加埋比；任何一份冇 → 唔做讀數檢查
+  const stateds = members.map(statedOf)
+  const statedTotal = stateds.some((x: number | null) => x === null) ? null : Math.round(stateds.reduce((a: number, b: number | null) => a + (b ?? 0), 0) * 100) / 100
   const m = matchStatementToCosts({ lines: lineIn, costs, outstanding, statementMonth: doc.statementMonth, statedTotal })
 
   const counts: Record<string, number> = {}
   for (const l of m.lines) counts[l.result] = (counts[l.result] ?? 0) + 1
-  const resultJson = {
+  // 每份單自己計入嘅金額（列表／總覽用，唔會兩份都顯示合計）
+  const resultById = new Map(m.lines.map((l) => [l.id, l.result]))
+  const ownTotal = (sec: any) => Math.round(sec.lines
+    .filter((l: any) => { const r = resultById.get(l.id); return r === 'MATCHED' || r === 'UNPAIRED' })
+    .reduce((a: number, l: any) => a + Number(l.amount), 0) * 100) / 100
+  const groupInfo = group
+    ? {
+        primarySectionId: group.primaryId,
+        memberSectionIds: group.memberIds,
+        members: members.map((sec: any) => ({ sectionId: sec.id, documentId: sec.documentId, ownStatementTotal: ownTotal(sec) })),
+      }
+    : null
+  const baseJson = {
     mode: 'COST',
     runAt: new Date().toISOString(),
     source: args.source,
@@ -176,14 +205,15 @@ export async function reconcileSection(
     notOnStatement: [],
   }
 
-  // 3–4. 寫回
-  const lineById = new Map<string, any>(section.lines.map((l: any) => [l.id, l]))
+  // 3–4. 寫回（組：每份單嘅行寫返自己段；每段寫同一組結果＋自己總數）
+  const lineById = new Map<string, any>(members.flatMap((sec: any) => sec.lines.map((l: any) => [l.id, { ...l, sectionId: sec.id }])))
   const saved = await client.$transaction(async (tx: any) => {
     for (const o of m.lines) {
       const prev = lineById.get(o.id)
-      const keepRes = prev?.resolution && KEEP_RESOLUTIONS.has(prev.resolution)
+      if (!prev) continue
+      const keepRes = prev.resolution && KEEP_RESOLUTIONS.has(prev.resolution)
       await tx.labStatementLine.updateMany({
-        where: { id: o.id, sectionId: section.id },
+        where: { id: o.id, sectionId: prev.sectionId },
         data: {
           result: o.result,
           matchBasis: o.costCaseId ? 'COST' : null,
@@ -193,16 +223,19 @@ export async function reconcileSection(
         },
       })
     }
-    const upd = await tx.labStatementSection.updateMany({
-      where: { id: section.id, documentId: doc.id, status: { not: 'CONFIRMED' } },
-      data: { status: m.status, systemTotal: m.costTotal, resultJson },
-    })
-    if (upd.count === 0) return false
-    // 未指派但成段唔使計（備貨）→ 唔再當未識別；全部分段齊 → 文件 IN_PROGRESS（§3.4）
-    if (doc.status === 'NEEDS_REVIEW') {
-      const all = await tx.labStatementSection.findMany({ where: { documentId: doc.id }, select: { clinicId: true, providerId: true, status: true } })
-      if (all.length > 0 && all.every((x: any) => (x.clinicId && x.providerId) || x.status !== 'NEEDS_ASSIGN')) {
-        await tx.labDocument.updateMany({ where: { id: doc.id, status: 'NEEDS_REVIEW' }, data: { status: 'IN_PROGRESS' } })
+    for (const sec of members) {
+      const json = groupInfo ? { ...baseJson, group: groupInfo, ownStatementTotal: ownTotal(sec) } : baseJson
+      const upd = await tx.labStatementSection.updateMany({
+        where: { id: sec.id, documentId: sec.documentId, status: { not: 'CONFIRMED' } },
+        data: { status: m.status, systemTotal: m.costTotal, resultJson: json },
+      })
+      if (upd.count === 0) return false
+      // 未指派但成段唔使計（備貨）→ 唔再當未識別；全部分段齊 → 文件 IN_PROGRESS（§3.4）
+      if (sec.document.status === 'NEEDS_REVIEW') {
+        const all = await tx.labStatementSection.findMany({ where: { documentId: sec.documentId }, select: { clinicId: true, providerId: true, status: true } })
+        if (all.length > 0 && all.every((x: any) => (x.clinicId && x.providerId) || x.status !== 'NEEDS_ASSIGN')) {
+          await tx.labDocument.updateMany({ where: { id: sec.documentId, status: 'NEEDS_REVIEW' }, data: { status: 'IN_PROGRESS' } })
+        }
       }
     }
     return true
@@ -232,6 +265,7 @@ export async function reconcileSection(
         notOursTotal: m.notOursTotal,
         nextMonthTotal: m.nextMonthTotal,
         carryInTotal: m.carryInTotal,
+        group: groupInfo ? { primarySectionId: groupInfo.primarySectionId, memberSectionIds: groupInfo.memberSectionIds } : null,
         costCount: costs.length,
         pairs: m.pairs.length,
         counts,
@@ -399,6 +433,16 @@ export async function afterCarryChange(
 ): Promise<void> {
   try {
     const scopes = [...(opts.scopes ?? []), ...(opts.sectionIds?.length ? await sectionCarryScopes(client, opts.sectionIds) : [])]
+    // ★ 2026-10-12：同月同範圍其他段（「兩份加埋一齊對」組可能變咗：作廢／取代／改範圍）→ 重對
+    const seen = new Set<string>()
+    for (const sc of scopes) {
+      if (!sc) continue
+      const key = `${sc.labId}|${sc.clinicId}|${sc.providerId}|${sc.month}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      const same = await activeScopeSections(client, sc)
+      for (const t of same) if (t.status !== 'CONFIRMED') await autoReconcileIfReady(client, t.id, actorId, 'auto', '[labdoc:scope]')
+    }
     await reconcileCarryTargets(client, scopes, actorId)
   } catch (e) {
     console.error('[labdoc] carry re-sync failed', e)

@@ -118,7 +118,9 @@ export async function nextMonthCarryBlock(
  *  - 來源冇咗（取消、作廢、取代）→ 刪副本；新來源 → 加副本（lineIndex 接住最大嗰個）
  * 回傳有冇改動（加／刪）。
  */
-export async function syncCarriedLines(client: any, sectionId: string): Promise<boolean> {
+export async function syncCarriedLines(client: any, sectionId: string, opts: { carryInto?: boolean } = {}): Promise<boolean> {
+  // ★ 2026-10-12：「兩份加埋一齊對」組入面唔係主段 → 唔收結轉（清走），結轉只入主段，唔會計兩次
+  const carryInto = opts.carryInto !== false
   return client.$transaction(async (tx: any) => {
     // 鎖分段：同一段同時對數唔會插兩次
     await tx.$queryRaw`SELECT "id" FROM "LabStatementSection" WHERE "id" = ${sectionId} FOR UPDATE`
@@ -135,7 +137,7 @@ export async function syncCarriedLines(client: any, sectionId: string): Promise<
       select: { id: true, carriedFromLineId: true },
     })
     const doc = section.document
-    const inScope = !!(doc.labId && doc.statementMonth && section.clinicId && section.providerId) && !INACTIVE_DOC.includes(doc.status)
+    const inScope = carryInto && !!(doc.labId && doc.statementMonth && section.clinicId && section.providerId) && !INACTIVE_DOC.includes(doc.status)
     let sources: any[] = []
     let prev = ''
     if (inScope) {

@@ -82,12 +82,14 @@ function makeFake(state: State) {
     labDocumentLine: {
       count: async () => state.matchedCount,
     },
+    // 月結單：冇分段（「加埋一齊對」組 → 冇其他段要打返未確認）
+    labStatementSection: { findMany: async () => [] },
     auditLog: { create: async (a: any) => state.audits.push(a.data) },
     $transaction: async (fn: any) => fn(makeFake(state)),
   }
 }
 
-const KEYS = ['user', 'labDocument', 'labDocumentLine', 'auditLog', '$transaction'] as const
+const KEYS = ['user', 'labDocument', 'labDocumentLine', 'labStatementSection', 'auditLog', '$transaction'] as const
 const saved: Record<string, unknown> = {}
 for (const k of KEYS) saved[k] = (prisma as any)[k]
 after(() => {

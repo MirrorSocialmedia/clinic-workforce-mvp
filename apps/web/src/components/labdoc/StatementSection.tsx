@@ -20,6 +20,7 @@ import { toast } from 'sonner'
 import { apiFetch } from '@/lib/api-client'
 import { fmtMoney } from './status-meta'
 import { SECTION_STATUS, type StmtLine, type StmtResp } from './StatementDetail'
+import { combineSection } from './combine-action'
 
 interface CostSnap { id: string; patientCode: string | null; itemType: string | null; finalCost: number | null; status: string; receivedAt: string | null; note?: string | null }
 interface CostResult {
@@ -99,6 +100,11 @@ export default function StatementSection({ id, sid }: { id: string; sid: string 
   // 上月結轉副本另外列；$0 行（冇標記）預設摺埋
   const carried = s.lines.filter((l) => !!l.carriedFromLineId)
   const native = s.lines.filter((l) => !l.carriedFromLineId)
+  // ★ 2026-10-12：兩份加埋一齊對 — 另一份（或幾份）單嘅行（帶返自己 doc／段做標記）
+  const combined = s.combined ?? null
+  const otherMembers = (combined?.members ?? []).filter((m) => !m.isSelf)
+  const otherLines = combined?.otherLines ?? []
+  const selfMember = combined?.members.find((m) => m.isSelf) ?? null
   const zeroCount = native.filter(isZeroLine).length
   const carryDup = new Set(rj.carryDuplicateLineIds ?? [])
   const st = SECTION_STATUS[s.status] ?? { label: s.status, cls: '' }
@@ -175,7 +181,11 @@ export default function StatementSection({ id, sid }: { id: string; sid: string 
 
       {s.duplicate && (
         <div className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm">
-          呢段嘅月結單已經喺 {s.duplicate.uploadedAt} 上傳過 — 返去總覽撳「取代舊版」先可以處理。
+          <div>同一位醫生、同一間 Lab、同一個月已經有一份月結單（{s.duplicate.uploadedAt} 上傳）。呢份係：</div>
+          <div className="flex flex-wrap gap-2 mt-2">
+            <Link href={`/lab-docs/statements/${id}`} className="px-3 py-1 rounded-lg border bg-card">Lab 重發 → 返總覽取代舊版</Link>
+            <button onClick={async () => { if (await combineSection(id, sid)) load() }} className="px-3 py-1 rounded-lg bg-brand text-white">另一份單 → 兩份加埋一齊對</button>
+          </div>
         </div>
       )}
       {s.status === 'NEEDS_ASSIGN' && (
@@ -196,7 +206,7 @@ export default function StatementSection({ id, sid }: { id: string; sid: string 
       {/* 總數 */}
       <div className="grid grid-cols-3 rounded-xl border bg-card divide-x">
         <div className="p-3">
-          <div className="text-xs text-muted-foreground">月結單</div>
+          <div className="text-xs text-muted-foreground">月結單{combined ? `（${combined.members.length} 份合計）` : ''}</div>
           <div className="text-lg font-semibold tabular-nums">{costed ? fmtMoney(rj.statementTotal) : '—'}</div>
           {((rj.stockTotal ?? 0) !== 0 || (rj.notOursTotal ?? 0) !== 0 || (rj.nextMonthTotal ?? 0) !== 0) && (
             <div className="text-[11px] text-muted-foreground">
@@ -245,7 +255,9 @@ export default function StatementSection({ id, sid }: { id: string; sid: string 
               </div>
             </>
           )}
-          <div className="px-3 py-2 border-b text-xs font-medium text-muted-foreground">月結單（{native.length} 行{zeroCount > 0 ? ` · ${native.length - zeroCount} 行要計` : ''}）</div>
+          <div className="px-3 py-2 border-b text-xs font-medium text-muted-foreground">
+            {combined ? `呢份月結單（${selfMember?.uploadedAt ?? ''} 上傳）· ` : '月結單（'}{native.length} 行{zeroCount > 0 ? ` · ${native.length - zeroCount} 行要計` : ''}{combined ? '' : '）'}
+          </div>
           <div className="divide-y">
             {native.filter((l) => showZero || !isZeroLine(l)).map((l) => (
               <LineRow key={l.id} docId={id} sid={sid} l={l} cost={lineToCost.has(l.id) ? costById.get(lineToCost.get(l.id)!) ?? null : null} editable={editable} onChanged={load} onPair={() => setPairFrom(l.id)} carryDup={false} month={data.document.statementMonth} />
@@ -258,6 +270,24 @@ export default function StatementSection({ id, sid }: { id: string; sid: string 
             )}
             {native.length === 0 && <div className="p-3 text-sm text-muted-foreground">冇行</div>}
           </div>
+          {otherMembers.map((mem) => {
+            const ls = otherLines.filter((l) => l.sectionId === mem.sectionId && !l.carriedFromLineId)
+            const shown = ls.filter((l) => showZero || !isZeroLine(l))
+            return (
+              <div key={mem.sectionId} className="border-t-2">
+                <div className="px-3 py-2 border-b text-xs font-medium text-muted-foreground flex justify-between gap-2">
+                  <span>另一份月結單（{mem.uploadedAt} 上傳）· {ls.length} 行</span>
+                  <Link href={`/lab-docs/statements/${mem.docId}`} className="underline">開嗰份</Link>
+                </div>
+                <div className="divide-y">
+                  {shown.map((l) => (
+                    <LineRow key={l.id} docId={mem.docId} sid={mem.sectionId} l={l} cost={lineToCost.has(l.id) ? costById.get(lineToCost.get(l.id)!) ?? null : null} editable={editable} onChanged={load} onPair={() => setPairFrom(l.id)} carryDup={false} month={data.document.statementMonth} />
+                  ))}
+                  {ls.length > shown.length && <div className="px-3 py-2 text-xs text-muted-foreground">＋ {ls.length - shown.length} 行 $0（收埋咗）</div>}
+                </div>
+              </div>
+            )
+          })}
         </div>
 
         {/* 成本錄入 */}
@@ -295,7 +325,7 @@ export default function StatementSection({ id, sid }: { id: string; sid: string 
         <PairPanel
           docId={id}
           sid={sid}
-          lines={s.lines}
+          lines={[...s.lines, ...otherLines]}
           costs={costs.filter((c) => !costToLines.has(c.id))}
           initial={pairFrom}
           onClose={() => setPairFrom(null)}

@@ -20,6 +20,7 @@ import { sectionDuplicateBlock } from '@/lib/labdoc/statement-sections'
 import { reconcileSection } from '@/lib/labdoc/statement-reconcile'
 import { labdocAudit } from '@/lib/labdoc/audit'
 import { labdocScope, kioskDocGuard } from '@/lib/labdoc/kiosk-scope'
+import { sectionCombineGroup } from '@/lib/labdoc/statement-combine'
 
 const SECTION_ID_RE = /^[a-z0-9]{25}$/
 const DOC_ID_RE = /^[a-z0-9]{25}$/
@@ -99,21 +100,36 @@ export async function POST(req: NextRequest, { params }: { params: { id: string;
     return jsonNoStore({ error: `${why} — 要寫原因先可以確認`, code: 'REASON_REQUIRED', diff: r.diff }, { status: 400 })
   }
 
-  // CONFIRMED（optimistic：已 CONFIRMED 嘅分段唔會再改）
-  const updated = await prisma.$transaction(async (tx) => {
-    const res = await tx.labStatementSection.updateMany({
-      where: { id: section.id, documentId: doc.id, status: { not: 'CONFIRMED' } },
-      data: { status: 'CONFIRMED', confirmedBy: session.userId, confirmedAt: new Date(), ...(needsReason ? { note: reason } : {}) },
-    })
-    if (res.count === 0) return null
+  // ★ 2026-10-12：「兩份加埋一齊對」→ 成組一齊確認（同一個原因）
+  const group = await sectionCombineGroup(prisma, section.id)
+  const memberIds = group ? group.memberIds : [section.id]
 
-    // 全部分段 CONFIRMED → 文件 RECONCILED
-    const siblings = await tx.labStatementSection.findMany({ where: { documentId: doc.id }, select: { status: true } })
-    const allConfirmed = siblings.length > 0 && siblings.every((s) => s.status === 'CONFIRMED')
-    if (allConfirmed && (doc.status === 'IN_PROGRESS' || doc.status === 'NEEDS_REVIEW')) {
-      await tx.labDocument.update({ where: { id: doc.id }, data: { status: 'RECONCILED' } })
+  // CONFIRMED（optimistic：已 CONFIRMED 嘅分段唔會再改；組：任何一段已確認 → 成個 transaction 倒返）
+  const updated = await prisma.$transaction(async (tx) => {
+    const confirmedAt = new Date()
+    const docIds = new Set<string>()
+    for (const sid of memberIds) {
+      const res = await tx.labStatementSection.updateMany({
+        where: { id: sid, status: { not: 'CONFIRMED' } },
+        data: { status: 'CONFIRMED', confirmedBy: session.userId, confirmedAt, ...(needsReason ? { note: reason } : {}) },
+      })
+      if (res.count === 0) throw new Error('ALREADY_CONFIRMED')
+      const sec = await tx.labStatementSection.findUnique({ where: { id: sid }, select: { documentId: true } })
+      if (sec) docIds.add(sec.documentId)
+    }
+
+    // 全部分段 CONFIRMED → 文件 RECONCILED（組：每份單各自計）
+    let allConfirmed = false
+    for (const did of docIds) {
+      const siblings = await tx.labStatementSection.findMany({ where: { documentId: did }, select: { status: true } })
+      const done = siblings.length > 0 && siblings.every((s) => s.status === 'CONFIRMED')
+      if (done) await tx.labDocument.updateMany({ where: { id: did, status: { in: ['IN_PROGRESS', 'NEEDS_REVIEW'] } }, data: { status: 'RECONCILED' } })
+      if (did === doc.id) allConfirmed = done
     }
     return { allConfirmed }
+  }).catch((e: Error) => {
+    if (e.message === 'ALREADY_CONFIRMED') return null
+    throw e
   })
   if (!updated) {
     return jsonNoStore({ error: '分段已經確認' }, { status: 409 })
@@ -135,6 +151,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string;
       totalDiff: r.diff,
       reason: needsReason ? reason : null,
       docStatusAfter: updated.allConfirmed ? 'RECONCILED' : doc.status,
+      groupSectionIds: group ? memberIds : null,
     },
     ipAddress: ip,
     userAgent: ua,

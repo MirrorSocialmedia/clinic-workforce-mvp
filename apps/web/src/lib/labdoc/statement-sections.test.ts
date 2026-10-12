@@ -174,7 +174,7 @@ test('identifyStatementSection：clinic 中咗但 doctor 唔中 → complete=fal
 })
 
 // ── findStatementSectionDuplicate（mock）────────────
-const dup: StatementDuplicate = { docId: 'doc-old-1', uploadedAt: new Date('2026-10-01T16:30:00Z'), uploadedBy: 'u1' } // HK 10/2 00:30
+const dup: StatementDuplicate = { docId: 'doc-old-1', sectionId: 'sec-old-1', uploadedAt: new Date('2026-10-01T16:30:00Z'), uploadedBy: 'u1' } // HK 10/2 00:30
 
 test('findStatementSectionDuplicate：param 缺 → null（唔比對）', async () => {
   const prisma: any = { labStatementSection: { findFirst: async () => { throw new Error('should not query') } } }
@@ -189,7 +189,7 @@ test('findStatementSectionDuplicate：命中 → 舊 doc（排除自己／VOID�
     labStatementSection: {
       findFirst: async (args: any) => {
         captured = args
-        return { document: { id: dup.docId, status: 'NEEDS_REVIEW', createdAt: dup.uploadedAt, uploadedBy: dup.uploadedBy } }
+        return { id: dup.sectionId, document: { id: dup.docId, status: 'NEEDS_REVIEW', createdAt: dup.uploadedAt, uploadedBy: dup.uploadedBy } }
       },
     },
   }

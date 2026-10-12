@@ -43,9 +43,11 @@ export function statementListSummary(sections: ListSectionIn[]): StatementListSu
     if (s.providerId && !providerIds.includes(s.providerId)) providerIds.push(s.providerId)
     if (!s.clinicId || !s.providerId) unassignedCount++
     if (s.status === 'CONFIRMED') confirmedCount++
-    const rj = (s.resultJson ?? {}) as { mode?: string; statementTotal?: unknown }
-    if (rj.mode === 'COST' && typeof rj.statementTotal === 'number') {
-      total += rj.statementTotal
+    const rj = (s.resultJson ?? {}) as { mode?: string; statementTotal?: unknown; ownStatementTotal?: unknown }
+    // ★ 2026-10-12：「兩份加埋一齊對」→ 每份單只計自己嘅行（唔好兩份都顯示合計）
+    const own = typeof rj.ownStatementTotal === 'number' ? rj.ownStatementTotal : rj.statementTotal
+    if (rj.mode === 'COST' && typeof own === 'number') {
+      total += own
       any = true
       continue
     }

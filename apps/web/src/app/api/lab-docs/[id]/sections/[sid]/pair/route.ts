@@ -23,6 +23,7 @@ import { labdocAudit } from '@/lib/labdoc/audit'
 import { reconcileSection, costScopeWhere } from '@/lib/labdoc/statement-reconcile'
 import { sectionDuplicateBlock } from '@/lib/labdoc/statement-sections'
 import { labdocScope, kioskDocGuard } from '@/lib/labdoc/kiosk-scope'
+import { sectionCombineGroup } from '@/lib/labdoc/statement-combine'
 
 const ID_RE = /^[a-z0-9]{25}$/
 const OPS = ['PAIR', 'UNPAIR', 'AUTO'] as const
@@ -99,8 +100,12 @@ export async function POST(req: NextRequest, { params }: { params: { id: string;
   const dupMsg = await sectionDuplicateBlock(prisma, doc, section)
   if (dupMsg) return jsonNoStore({ error: dupMsg, code: 'SECTION_DUPLICATE' }, { status: 409 })
 
+  // ★ 2026-10-12：「兩份加埋一齊對」→ 組入面兩份單嘅行都可以一齊配（成本範圍一樣）
+  const group = await sectionCombineGroup(prisma, section.id)
+  const groupIds = group ? group.memberIds : [section.id]
+
   const lines = await prisma.labStatementLine.findMany({
-    where: { id: { in: lineIds }, sectionId: section.id },
+    where: { id: { in: lineIds }, sectionId: { in: groupIds } },
     select: { id: true, amount: true, result: true, resolution: true, pairMode: true, pairCostCaseId: true },
   })
   if (lines.length !== lineIds.length) return jsonNoStore({ error: '行唔屬於呢個分段' }, { status: 404 })
@@ -127,7 +132,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string;
     if (!cost) return jsonNoStore({ error: '成本唔喺呢段範圍（同 Lab、同診所、同醫生、同月）' }, { status: 404 })
     if (cost.finalCost == null) return jsonNoStore({ error: '呢筆成本未有價 — 去成本錄入入咗價先' }, { status: 400 })
     const taken = await prisma.labStatementLine.count({
-      where: { sectionId: section.id, pairMode: 'MANUAL', pairCostCaseId: cost.id },
+      where: { sectionId: { in: groupIds }, pairMode: 'MANUAL', pairCostCaseId: cost.id },
     })
     if (taken > 0) return jsonNoStore({ error: '呢筆成本已經人手配對咗其他行 — 拆開先' }, { status: 409 })
     const linesSum = r2(lines.reduce((s, l) => s + Number(l.amount), 0))
@@ -143,7 +148,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string;
     if (line.pairMode === 'MANUAL' && line.pairCostCaseId) {
       // 人手配對：成組（同一筆成本）一齊拆
       const group = await prisma.labStatementLine.findMany({
-        where: { sectionId: section.id, pairMode: 'MANUAL', pairCostCaseId: line.pairCostCaseId },
+        where: { sectionId: { in: groupIds }, pairMode: 'MANUAL', pairCostCaseId: line.pairCostCaseId },
         select: { id: true },
       })
       targetIds = group.map((g) => g.id)
@@ -152,7 +157,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string;
       const pairs = (((section.resultJson as any)?.pairs ?? []) as Array<{ costCaseId: string; lineIds: string[] }>)
       const hit = pairs.find((p) => Array.isArray(p.lineIds) && p.lineIds.includes(line.id))
       const ids = hit ? hit.lineIds.filter((x) => typeof x === 'string') : [line.id]
-      const own = await prisma.labStatementLine.findMany({ where: { id: { in: ids }, sectionId: section.id }, select: { id: true } })
+      const own = await prisma.labStatementLine.findMany({ where: { id: { in: ids }, sectionId: { in: groupIds } }, select: { id: true } })
       targetIds = own.map((g) => g.id)
     }
     data = { pairMode: 'NONE', pairCostCaseId: null }
@@ -165,7 +170,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string;
     after = { op, lineIds: targetIds }
   }
 
-  await prisma.labStatementLine.updateMany({ where: { id: { in: targetIds }, sectionId: section.id }, data })
+  await prisma.labStatementLine.updateMany({ where: { id: { in: targetIds }, sectionId: { in: groupIds } }, data })
 
   const ip = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? null
   const ua = req.headers.get('user-agent') ?? null

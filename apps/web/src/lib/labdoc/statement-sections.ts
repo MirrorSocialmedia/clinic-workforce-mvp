@@ -10,6 +10,7 @@
  * 重複（§8.1）：同 Lab＋診所＋醫生＋月，有另一份未作廢／未取代嘅月結單分段 → 擋該分段
  *   （只讀計算 — 冇 DB 欄；reconcile/confirm 實時再查一次兜住並發）。
  */
+import { sectionCombineGroup } from './statement-combine'
 import { normDocNo, type SectionIdentifyResult } from './identify'
 
 /** §8.1：statementMonth 由邊度嚟（UI 標黃 = LINES）。 */
@@ -125,6 +126,8 @@ export async function createStatementSections(
 /** 重複衝突（另一份未作廢／未取代月結單嘅同 Lab＋診所＋醫生＋月分段）。 */
 export interface StatementDuplicate {
   docId: string
+  /** 撞咗嘅（較早）段 — 「兩份加埋一齊對」用 */
+  sectionId: string
   uploadedAt: Date
   uploadedBy: string
 }
@@ -143,11 +146,14 @@ export async function findStatementSectionDuplicate(
     selfDocId: string
     /** 只當「早過自己上傳」嘅為重複（後上傳嗰份先係重複；原本嗰份唔使擋） */
     selfCreatedAt?: Date | null
+    /** ★ 2026-10-12：已經「加埋一齊對」嘅同組段唔當重複 */
+    excludeSectionIds?: string[]
   },
 ): Promise<StatementDuplicate | null> {
   if (!args.labId || !args.clinicId || !args.providerId || !args.statementMonth) return null
   const hit = await prisma.labStatementSection.findFirst({
     where: {
+      ...(args.excludeSectionIds?.length ? { id: { notIn: args.excludeSectionIds } } : {}),
       clinicId: args.clinicId,
       providerId: args.providerId,
       document: {
@@ -160,12 +166,14 @@ export async function findStatementSectionDuplicate(
       },
     },
     select: {
+      id: true,
       document: { select: { id: true, status: true, createdAt: true, uploadedBy: true } },
     },
     orderBy: { document: { createdAt: 'asc' } }, // ★ section 表冇 createdAt — 排序經 document.createdAt（E2E-2 regression）
   })
   if (!hit) return null
   return {
+    sectionId: hit.id,
     docId: hit.document.id,
     uploadedAt: hit.document.createdAt,
     uploadedBy: hit.document.uploadedBy,
@@ -185,9 +193,12 @@ export function sectionDuplicateIssue(si: number, dup: StatementDuplicate): stri
 export async function sectionDuplicateBlock(
   prisma: any,
   doc: { id: string; labId: string | null; statementMonth: string | null; createdAt: Date },
-  section: { clinicId: string | null; providerId: string | null },
+  section: { id?: string; clinicId: string | null; providerId: string | null },
 ): Promise<string | null> {
+  // ★ 2026-10-12：已經「兩份加埋一齊對」嘅同組段唔擋
+  const group = section.id ? await sectionCombineGroup(prisma, section.id) : null
   const dup = await findStatementSectionDuplicate(prisma, {
+    excludeSectionIds: group?.memberIds,
     labId: doc.labId,
     clinicId: section.clinicId,
     providerId: section.providerId,
@@ -197,5 +208,5 @@ export async function sectionDuplicateBlock(
   })
   if (!dup) return null
   const hkDay = new Date(dup.uploadedAt.getTime() + 8 * 3600 * 1000).toISOString().slice(0, 10)
-  return `${doc.statementMonth} 呢段（同 Lab、診所、醫生）嘅月結單已經喺 ${hkDay} 上傳 — 要先「取代舊版」先可以處理`
+  return `${doc.statementMonth} 呢段（同 Lab、診所、醫生）嘅月結單已經喺 ${hkDay} 上傳 — 要先揀「取代舊版」（Lab 重發）或者「兩份加埋一齊對」先可以處理`
 }

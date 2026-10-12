@@ -176,6 +176,7 @@ export const SENSITIVE_AUDIT_SPEC: Array<{ action: string; entity?: string; labe
   { action: 'LAB_STATEMENT_HEADER', label: '月結單人手改 Lab／月份' },
   { action: 'LAB_STATEMENT_RESOLVE', label: '月結單行差異處理' },
   { action: 'LAB_STATEMENT_PAIR', label: '月結單行人手配對成本／未配對到' },
+  { action: 'LAB_STATEMENT_COMBINE', label: '⚠️ 月結單兩份加埋一齊對（可能打返未確認）' },
   { action: 'LAB_STATEMENT_ADJUST', label: '⚠️ 月結單改數（以月結單為準）' },
   { action: 'LAB_STATEMENT_RECONCILE', label: '月結單對數' },
   { action: 'LAB_STATEMENT_SUPERSEDE', label: '⚠️ 月結單取代舊版' },
