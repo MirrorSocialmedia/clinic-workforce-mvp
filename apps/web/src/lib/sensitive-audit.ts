@@ -140,6 +140,8 @@ export const SENSITIVE_AUDIT_SPEC: Array<{ action: string; entity?: string; labe
   { action: 'DAILY_CELL_CHECK', label: '每日大數逐格核對（醫生×付款方式）' }, // ★ cwm-dailyv2-20261007 ④
   { action: 'DAILY_CELL_UNCHECK', label: '取消每日大數逐格核對' }, // ★ cwm-dailyv2-20261007 ④
   { action: 'PAYOUT_ADJUST_CREATE', label: '新增調整記錄' },
+  { action: 'PAYOUT_ADJUST_UPDATE', label: '修改調整記錄' }, // ★ cwm-adjedit-20261013
+  { action: 'PAYOUT_ADJUST_DELETE', label: '⚠️ 刪除調整記錄' },
   // ★ MD-E: 月報對數
   { action: 'RECONCILIATION_IMPORT', label: '上載月報對數' },
   { action: 'FEE_ITEM_LIST_PRICE_SET', label: '設定項目標準價' },

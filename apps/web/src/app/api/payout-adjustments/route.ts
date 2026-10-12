@@ -4,40 +4,23 @@ import { writeInPeriod, PeriodLockedError } from '@/lib/payout/period-lock'
 import { createVoidAdjustment } from '@/lib/payout/engine'
 import { lockedRunFor, isMonthStr } from '@/lib/cost-entry/guards'
 import { NextRequest } from 'next/server'
-import { payoutClinicGuard } from '@/lib/payout/kiosk-scope'
+import { payoutClinicGuard, payoutClinicWhere } from '@/lib/payout/kiosk-scope'
+import { validateAdjustmentInput } from '@/lib/payout/adjustment-crud'
 
 export async function POST(req: NextRequest) {
 	const auth = await requirePerm(req, 'provider_payout')
 	if (isAuthError(auth)) return auth.error
 	const { session } = auth
 	const body = await req.json().catch(() => ({} as any))
-	const { providerId, clinicId, periodMonth, sourceMonth, reason, refCode, amount, note } = body
-	if (!providerId || !clinicId || !periodMonth || !reason || amount == null) {
-		return Response.json({ error: 'providerId, clinicId, periodMonth, reason, amount 都係必填' }, { status: 400 })
+	// ★ cwm-adjedit-20261013：驗證搬去 adjustment-crud（新增／修改共用；修正 0.07 之類浮點誤判）
+	const v = validateAdjustmentInput(body)
+	if (!v.ok) {
+		const denied = body?.clinicId ? payoutClinicGuard(session, body.clinicId) : null // ★ cwm-kioskpayout-20261010
+		if (denied) return denied
+		return Response.json({ error: v.error }, { status: 400 })
 	}
+	const { providerId, clinicId, periodMonth, sourceMonth, reason, refCode, amount: amt, note } = v.data
 	{ const denied = payoutClinicGuard(session, clinicId); if (denied) return denied } // ★ cwm-kioskpayout-20261010
-	const amt = Number(amount)
-	// ★ P3-deploy J4: 金額守衛
-	if (!Number.isFinite(amt)) {
-		return Response.json({ error: '金額異常' }, { status: 400 })
-	}
-	if (Math.abs(amt) > 1_000_000) {
-		return Response.json({ error: '金額異常' }, { status: 400 })
-	}
-	if (reason === 'VOID' && amt > 0) {
-		return Response.json({ error: '作廢回沖金額必須係負數' }, { status: 400 })
-	}
-	// ★ cwm-payaudit-20261006：$0、錯月份、錯原因、唔存在嘅醫生／診所、已鎖月份 —— 全部擋
-	//   （已鎖月份嘅調整永遠唔會被任何月結單撈到 → 醫生收唔到，又冇人知）
-	if (amt === 0 || Math.round(amt * 100) !== amt * 100) {
-		return Response.json({ error: '金額唔可以係 $0，最多兩個小數位' }, { status: 400 })
-	}
-	if (!isMonthStr(periodMonth) || (sourceMonth && !isMonthStr(sourceMonth))) {
-		return Response.json({ error: '月份格式錯（YYYY-MM）' }, { status: 400 })
-	}
-	if (!['VOID', 'REFUND', 'MANUAL'].includes(reason)) {
-		return Response.json({ error: '原因只可以係 VOID / REFUND / MANUAL' }, { status: 400 })
-	}
 	const [prov, clin] = await Promise.all([
 		prisma.provider.findUnique({ where: { id: providerId }, select: { id: true } }),
 		prisma.clinic.findUnique({ where: { id: clinicId }, select: { id: true } }),
@@ -76,9 +59,65 @@ export async function POST(req: NextRequest) {
 			action: 'PAYOUT_ADJUST_CREATE',
 			entity: 'PayoutAdjustment',
 			entityId: adj.id,
+			clinicId,
 			notes: `新增調整記錄: ${periodMonth} — ${reason}${amt > 0 ? ' +' : ''}${amt}${refCode ? ` (${refCode})` : ''}`,
 			afterJson: JSON.stringify({ providerId, periodMonth, amount: amt, reason }),
 		},
 	})
 	return Response.json({ ok: true })
+}
+
+/**
+ * ★ cwm-adjlist-20261012：GET /api/payout-adjustments?month=&providerId=&clinicId= — 之前嘅手動調整記錄
+ *   月份篩「落喺邊個月」（periodMonth）；唔篩 = 最近 200 筆。權限同新增（provider_payout）；店舖帳號只見自己店。
+ *   每筆帶醫生／診所名、錄入人、有冇入咗月結（runId → 月結狀態）。純讀。
+ */
+export async function GET(req: NextRequest) {
+	const auth = await requirePerm(req, 'provider_payout')
+	if (isAuthError(auth)) return auth.error
+	const { session } = auth
+	const sp = req.nextUrl.searchParams
+	const month = sp.get('month')
+	const providerId = sp.get('providerId')
+	const clinicId = sp.get('clinicId')
+	if (month && !isMonthStr(month)) return Response.json({ error: '月份格式錯（YYYY-MM）' }, { status: 400 })
+	if (clinicId) { const denied = payoutClinicGuard(session, clinicId); if (denied) return denied }
+
+	const where: any = { ...payoutClinicWhere(session) }
+	if (month) where.periodMonth = month
+	if (providerId) where.providerId = providerId
+	if (clinicId) where.clinicId = clinicId
+	const rows = await prisma.payoutAdjustment.findMany({
+		where,
+		orderBy: [{ createdAt: 'desc' }],
+		take: 200,
+		include: { run: { select: { id: true, status: true } } },
+	})
+	const [providers, clinics, users] = await Promise.all([
+		prisma.provider.findMany({ where: { id: { in: [...new Set(rows.map(r => r.providerId))] } }, select: { id: true, name: true } }),
+		prisma.clinic.findMany({ where: { id: { in: [...new Set(rows.map(r => r.clinicId).filter((x): x is string => !!x))] } }, select: { id: true, name: true, shortName: true } }),
+		prisma.user.findMany({ where: { id: { in: [...new Set(rows.map(r => r.createdBy))] } }, select: { id: true, name: true } }),
+	])
+	const pName = new Map(providers.map(p => [p.id, p.name]))
+	const cName = new Map(clinics.map(c => [c.id, c.shortName || c.name]))
+	const uName = new Map(users.map(u => [u.id, u.name]))
+	return Response.json({
+		adjustments: rows.map(r => ({
+			id: r.id,
+			providerId: r.providerId,
+			providerName: pName.get(r.providerId) ?? '（已刪除醫生）',
+			clinicId: r.clinicId,
+			clinicName: r.clinicId ? (cName.get(r.clinicId) ?? '（已刪除診所）') : '—',
+			periodMonth: r.periodMonth,
+			sourceMonth: r.sourceMonth,
+			reason: r.reason,
+			refCode: r.refCode,
+			amount: Number(r.amount),
+			note: r.note,
+			createdByName: uName.get(r.createdBy) ?? r.createdBy,
+			createdAt: r.createdAt,
+			// 入咗邊張月結（null = 未入；LOCKED = 已鎖定出糧）
+			runStatus: r.run?.status ?? null,
+		})),
+	}, { headers: { 'Cache-Control': 'no-store' } })
 }

@@ -29,6 +29,7 @@ interface PayoutRun {
   spSubsidy: number
   refAmount: number
   adjustAmount: number
+  liveAdjustAmount?: number | null // ★ cwm-adjedit-20261013：草稿先有（即場未入月結嘅調整合計）
   totalAmount: number
   breakdownJson: any
   provider: { name: string; shortName?: string | null }
@@ -384,6 +385,11 @@ export default function PayoutRunDetailPage({ params }: { params: { id: string }
           <div className="flex justify-between"><span>轉介收入</span><span>+$ {run.refAmount.toFixed(2)}</span></div>
           <div className="flex justify-between"><span>上期調整</span><span>+$ {run.adjustAmount.toFixed(2)}</span></div>
         </div>
+        {isDraft && run.liveAdjustAmount != null && Math.abs(run.liveAdjustAmount - run.adjustAmount) > 0.005 && (
+          <div className="mt-2 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded px-3 py-2">
+            ⚠️ 呢期嘅調整記錄生成草稿之後有改動：草稿計 {fmtSigned(run.adjustAmount)}，而家應該係 {fmtSigned(run.liveAdjustAmount)}。請按「重新生成」再鎖定。
+          </div>
+        )}
       </Card>
 
       <Card className="p-4 mb-4">
@@ -499,4 +505,9 @@ export default function PayoutRunDetailPage({ params }: { params: { id: string }
       )}
     </div>
   )
+}
+
+// ★ cwm-adjedit-20261013：+$1.00／−$88.50
+function fmtSigned(n: number) {
+  return `${n < 0 ? '−' : '+'}$${Math.abs(n).toFixed(2)}`
 }
