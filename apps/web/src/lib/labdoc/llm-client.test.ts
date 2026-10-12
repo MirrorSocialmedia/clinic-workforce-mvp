@@ -9,7 +9,7 @@
  *  - 429 BUSY：重試且 **re-seal 新 envelope**（nonce/ts 每次 attempt 都新 — 工單 §1 決定 4）
  *  - 429 耗盡 → busy_exhausted；401/400 → rejected（唔重試）；503/500 → upstream
  *  - env 未設 → not_configured
- *  - timeout：fetch reject TimeoutError → 'timeout'（真 270s 唔實測；常量錨定 270_000）
+ *  - timeout：fetch reject TimeoutError → 'timeout'（真 750s 唔實測；常量錨定 750_000）
  */
 import test, { before, after } from 'node:test'
 import assert from 'node:assert/strict'
@@ -116,7 +116,8 @@ test('context 錨定 + 200 ok → result（client 95s 常量）', async () => {
   reset()
   assert.equal(M.REQ_CONTEXT_LABDOC, 'labdoc-extract.v1')
   // 2026-10-11：長月結單 → 預設 270s（> W 側 240s；W route keep-alive streaming 避 Cloudflare 100s）
-  assert.equal(M.LABDOC_CLIENT_TIMEOUT_MS, 270_000)
+  // 2026-10-12：W 側輸出上限 ×3 → 時限 ×3：750s（> W 側 720s）
+  assert.equal(M.LABDOC_CLIENT_TIMEOUT_MS, 750_000)
   const r = await M.extractLabDocViaWaInbox(REQ)
   assert.equal(r.nullReason, null)
   assert.equal(r.outcome?.result?.docNoRaw, 'INV-001')
