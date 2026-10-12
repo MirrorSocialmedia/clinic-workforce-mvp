@@ -23,6 +23,9 @@ import { toast } from 'sonner'
 import { apiFetch } from '@/lib/api-client'
 import { fmtMoney, hkDate, hkDateTime, statusMeta } from './status-meta'
 import LabDocViewer from './LabDocViewer'
+import StatementProgressCards from './StatementProgressCards'
+import { todayHK } from '@/lib/hk-date'
+import { lastMonthOf } from '@/lib/labdoc/statement-progress'
 
 export interface ListDoc {
   id: string
@@ -142,8 +145,10 @@ export default function InvoiceList({ clinicNames, providerNames, kind = 'INVOIC
   const [viewDoc, setViewDoc] = useState<{ id: string; name?: string } | null>(null)
   // 篩選：診所、月份（月結單 = 月結單月份；到貨單 = 單據日期月份）、顯示已作廢
   const [fClinic, setFClinic] = useState('')
-  const [fMonth, setFMonth] = useState('')
+  // ★ cwm-labstmtprog-20261012：月結單預設上個月（9 月結單通常 10 月先到）；到貨單照舊全部
+  const [fMonth, setFMonth] = useState(() => (kind === 'STATEMENT' ? lastMonthOf(todayHK()) : ''))
   const [showVoid, setShowVoid] = useState(false)
+  const [openOnly, setOpenOnly] = useState(false) // ★ 只睇未對（月結單）
 
   const photoRef = useRef<HTMLInputElement>(null)
   const pdfRef = useRef<HTMLInputElement>(null)
@@ -155,6 +160,7 @@ export default function InvoiceList({ clinicNames, providerNames, kind = 'INVOIC
       if (!showVoid) sp.set('hideVoid', '1')
       if (fClinic) sp.set('clinicId', fClinic)
       if (/^\d{4}-\d{2}$/.test(fMonth)) sp.set('month', fMonth)
+      if (isStmt && openOnly) sp.set('notReconciled', '1')
       const data = await apiFetch<ListResp>(`/api/lab-docs?${sp.toString()}`)
       setItems(data.items)
       setTotal(data.total)
@@ -165,7 +171,7 @@ export default function InvoiceList({ clinicNames, providerNames, kind = 'INVOIC
     } finally {
       setLoading(false)
     }
-  }, [kind, showVoid, fClinic, fMonth])
+  }, [kind, showVoid, fClinic, fMonth, isStmt, openOnly])
 
   useEffect(() => {
     load(1)
@@ -181,13 +187,14 @@ export default function InvoiceList({ clinicNames, providerNames, kind = 'INVOIC
         if (!showVoid) sp.set('hideVoid', '1')
         if (fClinic) sp.set('clinicId', fClinic)
         if (/^\d{4}-\d{2}$/.test(fMonth)) sp.set('month', fMonth)
+        if (isStmt && openOnly) sp.set('notReconciled', '1')
         const data = await apiFetch<ListResp>(`/api/lab-docs?${sp.toString()}`)
         setItems(data.items)
         setTotal(data.total)
       } catch { /* 下次再試 */ }
     }, 5000)
     return () => clearTimeout(t)
-  }, [busyIds, items, kind, page, showVoid, fClinic, fMonth])
+  }, [busyIds, items, kind, page, showVoid, fClinic, fMonth, isStmt, openOnly])
 
   const handleFiles = async (files: FileList | null, isPhoto: boolean) => {
     if (!files || files.length === 0) return
@@ -355,11 +362,22 @@ export default function InvoiceList({ clinicNames, providerNames, kind = 'INVOIC
         {(fClinic || fMonth) && (
           <button className="underline text-muted-foreground" onClick={() => { setFClinic(''); setFMonth('') }}>清除</button>
         )}
+        {isStmt && (
+          <label className="flex items-center gap-1.5 text-muted-foreground">
+            <input type="checkbox" checked={openOnly} onChange={(e) => setOpenOnly(e.target.checked)} />
+            只睇未對
+          </label>
+        )}
         <label className="flex items-center gap-1.5 ml-auto text-muted-foreground">
           <input type="checkbox" checked={showVoid} onChange={(e) => setShowVoid(e.target.checked)} />
           顯示已作廢
         </label>
       </div>
+
+      {/* ★ cwm-labstmtprog-20261012：月結單逐間診所已對／未對（撳卡 = 只睇嗰間） */}
+      {isStmt && (
+        <StatementProgressCards month={fMonth} clinicNames={clinicNames} selected={fClinic} onPick={setFClinic} reloadKey={items.length + total} />
+      )}
 
       {/* 手機：卡片 */}
       <div className="md:hidden space-y-2">
