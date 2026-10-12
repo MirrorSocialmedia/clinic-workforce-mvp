@@ -109,7 +109,8 @@ function makeFake(state: St): any {
       findUnique: async ({ where }: any) => (where.id === state.doc.id ? { ...state.doc } : null),
       update: async ({ data }: any) => { Object.assign(state.doc, data); return { ...state.doc } },
       updateMany: async ({ where, data }: any) => {
-        if (where.id !== state.doc.id || (where.status && where.status !== state.doc.status)) return { count: 0 }
+        if (where.id !== state.doc.id) return { count: 0 }
+        if (where.status && (typeof where.status === 'string' ? where.status !== state.doc.status : !where.status.in?.includes(state.doc.status))) return { count: 0 }
         Object.assign(state.doc, data)
         return { count: 1 }
       },
@@ -184,7 +185,8 @@ function makeFake(state: St): any {
         for (const s of state.sections) {
           for (const l of s.lines) {
             const idOk = typeof where.id === 'string' ? l.id === where.id : where.id?.in ? where.id.in.includes(l.id) : true
-            if (!idOk || (where.sectionId && l.sectionId !== where.sectionId)) continue
+            const secOk = !where.sectionId || (typeof where.sectionId === 'string' ? l.sectionId === where.sectionId : where.sectionId.in.includes(l.sectionId))
+            if (!idOk || !secOk) continue
             Object.assign(l, data)
             count++
           }

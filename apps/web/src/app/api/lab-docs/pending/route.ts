@@ -9,6 +9,7 @@
 // ownership-ok: labdoc 全集團範圍（B16）
 export const dynamic = 'force-dynamic'
 
+import { isNonPrimaryMember } from '@/lib/labdoc/statement-combine'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
@@ -392,9 +393,28 @@ async function main(req: NextRequest): Promise<NextResponse> {
       take: limit,
     })
     const count = await prisma.labStatementSection.count({ where })
+    // ★ 2026-10-12：「兩份加埋一齊對」組 — 每段都係成組差額 → 只列主段；
+    //   count 要扣晒全部組員（唔止 take 入面嗰啲）：只睇有份加埋嘅段（指人／俾人指）
+    const targets = await prisma.labStatementSection.findMany({
+      where: { combineWithSectionId: { not: null } },
+      select: { combineWithSectionId: true },
+    })
+    const targetIds = [...new Set(targets.map((t) => t.combineWithSectionId as string))]
+    const combined = targetIds.length === 0 ? [] : await prisma.labStatementSection.findMany({
+      where: { AND: [where, { OR: [{ combineWithSectionId: { not: null } }, { id: { in: targetIds } }] }] },
+      select: { id: true, resultJson: true },
+    })
+    // 主段要仲係有效（文件未作廢／取代）先跳過其他段 — 唔會漏數
+    const primaryIds = [...new Set(combined.map((r) => (r.resultJson as any)?.group?.primarySectionId).filter((x): x is string => typeof x === 'string'))]
+    const activePrimary = new Set(primaryIds.length === 0 ? [] : (await prisma.labStatementSection.findMany({
+      where: { id: { in: primaryIds }, document: { status: { notIn: ['VOID', 'SUPERSEDED', 'DUPLICATE'] } } },
+      select: { id: true },
+    })).map((r) => r.id))
+    const diffRows = rows.filter((r) => !isNonPrimaryMember(r.id, r.resultJson, activePrimary))
+    const nonPrimary = combined.filter((r) => isNonPrimaryMember(r.id, r.resultJson, activePrimary)).length
     results.set('STATEMENT_DIFF', {
-      count,
-      items: rows.map((r) => {
+      count: Math.max(0, count - nonPrimary),
+      items: diffRows.map((r) => {
         const rj = (r.resultJson ?? {}) as { statementTotal?: number; costTotal?: number; diff?: number }
         return {
           id: r.id,

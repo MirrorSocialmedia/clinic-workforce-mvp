@@ -11,6 +11,7 @@
  * - 重複分段 → 「取代舊版」（要原因；舊版已處理嘅差異會帶過嚟）
  */
 
+import { combineSection } from './combine-action'
 import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
 import { ArrowLeft, ChevronRight, ImageIcon, Loader2, Pencil, RotateCcw } from 'lucide-react'
@@ -37,7 +38,13 @@ export interface StmtSection {
   resultJson: { mode?: string; statementTotal?: number; costTotal?: number; diff?: number; stockTotal?: number; counts?: Record<string, number> } | null
   costEvidence: { totalFinalCost: number | null; discountCosts: Array<{ id: string; itemType: string | null; discountPct: number }>; flag: boolean }
   newInvoicesSinceRun: number
-  duplicate: { docId: string; uploadedAt: string } | null
+  duplicate: { docId: string; sectionId?: string; uploadedAt: string } | null
+  /** ★ 2026-10-12：兩份加埋一齊對 */
+  combined?: {
+    primarySectionId: string
+    members: Array<{ sectionId: string; docId: string; uploadedAt: string; isSelf: boolean; isPrimary: boolean }>
+    otherLines: Array<StmtLine & { sectionId: string; docId: string }>
+  } | null
   lines: StmtLine[]
 }
 export interface StmtLine {
@@ -175,11 +182,15 @@ export default function StatementDetail({ id }: { id: string }) {
 
   // ★ 2026-10-11：月結單頁都可以作廢（例：讀單失敗、影錯、上傳重複）— 同 invoice 用同一個 DELETE（要原因）
   const voidDoc = async () => {
-    const reason = window.prompt('作廢呢份月結單？請寫原因（例：影錯相、重複上傳、會重新上傳）')
+    const inGroup = data.sections.some((s) => s.combined)
+    const reason = window.prompt(
+      '作廢呢份月結單？請寫原因（例：影錯相、重複上傳、會重新上傳）'
+        + (inGroup ? '\n\n⚠ 呢份同另一份月結單「加埋一齊對」緊 — 作廢之後另一份要重新對數、重新確認。' : ''),
+    )
     if (!reason?.trim()) return
     try {
-      await apiFetch(`/api/lab-docs/${id}`, { method: 'DELETE', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ reason: reason.trim() }) })
-      toast.success('已作廢')
+      const r = await apiFetch<{ unconfirmedSectionIds?: string[] }>(`/api/lab-docs/${id}`, { method: 'DELETE', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ reason: reason.trim() }) })
+      toast.success(r?.unconfirmedSectionIds?.length ? `已作廢 — 加埋嗰份已打返未確認（${r.unconfirmedSectionIds.length} 段），要重新確認` : '已作廢')
       load()
     } catch (e) {
       toast.error((e as Error).message)
@@ -193,6 +204,15 @@ export default function StatementDetail({ id }: { id: string }) {
       await apiFetch(`/api/lab-docs/${id}/payee`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ version: d.version }) })
       toast.success('已記住收款人'); load()
     } catch (e) { toast.error((e as Error).message) }
+  }
+
+  // ★ 2026-10-12：同一位醫生、同 Lab、同月嘅另一份單（唔係重發）→ 加埋一齊對（每段撞咗嘅都加）
+  const combineWith = async (oldId: string) => {
+    const secs = data.sections.filter((s) => s.duplicate?.docId === oldId)
+    if (secs.length === 0) return
+    let ok = 0
+    for (const s of secs) if (await combineSection(id, s.id, { silent: true })) ok++
+    if (ok > 0) { toast.success(`已加埋 ${ok} 段：兩份月結單一齊同成本錄入對`); load() }
   }
 
   const supersede = async (oldId: string) => {
@@ -275,9 +295,10 @@ export default function StatementDetail({ id }: { id: string }) {
       {data.statementMonthFromLines && <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm">月份係由行嘅日期推斷 — 請核對</div>}
       {dups.map((dup) => (
         <div key={dup.docId} className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm flex flex-wrap items-center gap-2">
-          <span className="flex-1">同一個月、同 Lab／診所／醫生嘅月結單已經喺 {dup.uploadedAt} 上傳過 — 要先取代舊版先可以處理。</span>
-          <Link className="underline" href={`/lab-docs/statements/${dup.docId}`}>睇舊版</Link>
-          <button className="px-3 py-1 rounded-lg bg-brand text-white" onClick={() => supersede(dup.docId)}>取代舊版</button>
+          <span className="flex-1">同一個月、同 Lab／診所／醫生已經有一份月結單（{dup.uploadedAt} 上傳）。呢份係：</span>
+          <Link className="underline" href={`/lab-docs/statements/${dup.docId}`}>睇另一份</Link>
+          <button className="px-3 py-1 rounded-lg border bg-card" onClick={() => supersede(dup.docId)}>Lab 重發 → 取代舊版</button>
+          <button className="px-3 py-1 rounded-lg bg-brand text-white" onClick={() => combineWith(dup.docId)}>另一份單 → 兩份加埋一齊對</button>
         </div>
       ))}
 

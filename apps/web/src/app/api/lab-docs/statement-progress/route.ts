@@ -11,6 +11,7 @@ import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { jsonNoStore } from '@/lib/api-response'
 import { labdocScope } from '@/lib/labdoc/kiosk-scope'
 import { statementProgress, STATEMENT_EXCLUDED } from '@/lib/labdoc/statement-progress'
+import { isNonPrimaryMember } from '@/lib/labdoc/statement-combine'
 
 export async function GET(req: NextRequest) {
   const auth = await requireAuth(req, 'GET', req.url)
@@ -35,12 +36,14 @@ export async function GET(req: NextRequest) {
     select: { clinicId: true, labId: true, providerId: true },
     distinct: ['clinicId', 'labId', 'providerId'],
   })
+  // 「加埋一齊對」：主段要仲係有效先跳過其他段（主段作廢咗 → 其他段自己計）
+  const activeIds = new Set<string>(statements.flatMap(s => s.sections.map(sec => sec.id)))
   const r = statementProgress(
     statements.map(s => ({
       ...s,
       sections: s.sections.map(sec => {
         const rj = (sec.resultJson ?? {}) as { mode?: string; diff?: unknown }
-        return { id: sec.id, clinicId: sec.clinicId, providerId: sec.providerId, status: sec.status, diff: rj.mode === 'COST' && typeof rj.diff === 'number' ? rj.diff : null }
+        return { id: sec.id, clinicId: sec.clinicId, providerId: sec.providerId, status: sec.status, diff: rj.mode === 'COST' && typeof rj.diff === 'number' ? rj.diff : null, skipTodo: isNonPrimaryMember(sec.id, sec.resultJson, activeIds) }
       }),
     })),
     costs.map(c => ({ clinicId: c.clinicId, labId: c.labId as string, providerId: c.providerId })),

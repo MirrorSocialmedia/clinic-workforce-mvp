@@ -11,6 +11,8 @@
  *   - 冇月結單                             → 唔出
  */
 
+import { isNonPrimaryMember } from './statement-combine'
+
 export type StatementMarkStatus = 'OK' | 'OK_DIFF' | 'CHANGED' | 'PARTIAL' | 'IN_PROGRESS'
 
 export interface StatementMark {
@@ -41,9 +43,12 @@ export async function costStatementMarks(
       ...(args.clinicIds ? { clinicId: { in: args.clinicIds } } : {}),
       ...(args.providerId ? { providerId: args.providerId } : {}),
     },
-    select: { status: true, clinicId: true, providerId: true, resultJson: true, note: true, document: { select: { id: true, labId: true } } },
+    select: { id: true, status: true, clinicId: true, providerId: true, resultJson: true, note: true, document: { select: { id: true, labId: true } } },
   })
   if (sections.length === 0) return out
+  // ★ 2026-10-12：「兩份加埋一齊對」組 — 差額／成本快照每段都係成組嘅數 → 只計主段（唔會計兩次）
+  const activeIds = new Set<string>(sections.map((s) => s.id))
+  const counted = (s: any) => !isNonPrimaryMember(s.id, s.resultJson, activeIds)
 
   // 而家成本（同 Lab、同月、範圍內），按 Lab＋診所＋醫生
   const groups: any[] = await client.costCase.groupBy({
@@ -78,7 +83,7 @@ export async function costStatementMarks(
     let changedBy = 0
     let diff = 0
     const reasons: string[] = []
-    for (const s of secs) {
+    for (const s of secs.filter(counted)) {
       const rj = (s.resultJson ?? {}) as any
       if (typeof rj.diff === 'number') diff += rj.diff
       if (s.note) reasons.push(s.note)

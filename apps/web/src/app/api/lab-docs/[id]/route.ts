@@ -12,6 +12,7 @@ import { jsonNoStore } from '@/lib/api-response'
 import { statementCostSummary, afterCarryChange } from '@/lib/labdoc/statement-reconcile'
 import { labDocQueuePositions } from '@/lib/labdoc/queue-position'
 import { findStatementSectionDuplicate } from '@/lib/labdoc/statement-sections'
+import { sectionCombineGroup, otherGroupMembersOfDoc, unconfirmSections } from '@/lib/labdoc/statement-combine'
 import { labdocScope, kioskDocGuard, kioskSectionAllowed, kioskClinics } from '@/lib/labdoc/kiosk-scope'
 
 const DOC_ID_RE = /^[a-z0-9]{25}$/
@@ -225,6 +226,7 @@ export async function GET(
                     statementMonth: doc.statementMonth,
                     selfDocId: doc.id,
                     selfCreatedAt: doc.createdAt,
+                    excludeSectionIds: (await sectionCombineGroup(prisma, s.id))?.memberIds,
                   })
                 : null
             // 「成本錄入喺上次對數之後有改動，可以重新對數」（2026-10-11：系統方改為成本錄入）
@@ -269,6 +271,56 @@ export async function GET(
                 costEvidence = { totalFinalCost, discountCosts, flag }
               }
             }
+            const mapLine = (l: any) => ({
+              id: l.id,
+              lineIndex: l.lineIndex,
+              lineType: l.lineType,
+              docNoRaw: l.docNoRaw,
+              docNo: l.docNo,
+              date: l.date,
+              patientRaw: l.patientRaw,
+              patientCode: l.patientCode,
+              labCaseRef: l.labCaseRef,
+              description: l.description,
+              toothRaw: l.toothRaw,
+              qty: l.qty == null ? null : Number(l.qty),
+              unitPrice: l.unitPrice == null ? null : Number(l.unitPrice),
+              amount: Number(l.amount),
+              agingBucket: l.agingBucket,
+              matchedDocumentId: l.matchedDocumentId,
+              matchedLineId: l.matchedLineId,
+              matchBasis: l.matchBasis,
+              result: l.result,
+              resolution: l.resolution,
+              resolutionNote: l.resolutionNote,
+              resolvedBy: l.resolvedBy,
+              resolvedAt: l.resolvedAt,
+              followUpClosedAt: l.followUpClosedAt,
+              followUpClosedBy: l.followUpClosedBy,
+              pairMode: l.pairMode,
+              pairCostCaseId: l.pairCostCaseId,
+              carriedFromLineId: l.carriedFromLineId,
+              carriedFromMonth: l.carriedFromMonth,
+              system: systemView(l.matchedDocumentId, l.matchedLineId),
+            })
+            // ★ 2026-10-12：組（兩份加埋一齊對）
+            const group = s.clinicId && s.providerId ? await sectionCombineGroup(prisma, s.id) : null
+            const groupMembers = group
+              ? await Promise.all(group.members.map(async (m) => ({
+                  sectionId: m.id,
+                  docId: m.documentId,
+                  uploadedAt: new Date(m.docCreatedAt.getTime() + 8 * 3600 * 1000).toISOString().slice(0, 10),
+                  isSelf: m.id === s.id,
+                  isPrimary: m.id === group.primaryId,
+                })))
+              : []
+            const otherLines = group
+              ? (await prisma.labStatementLine.findMany({
+                  where: { sectionId: { in: group.memberIds.filter((x) => x !== s.id) } },
+                  orderBy: [{ sectionId: 'asc' }, { lineIndex: 'asc' }],
+                  include: { section: { select: { documentId: true } } },
+                })).map((l: any) => ({ l, sectionId: l.sectionId as string, docId: l.section.documentId as string }))
+              : []
             return {
               id: s.id,
               sectionIndex: s.sectionIndex,
@@ -296,42 +348,20 @@ export async function GET(
               duplicate: dup
                 ? {
                     docId: dup.docId,
+                    sectionId: dup.sectionId,
                     uploadedAt: new Date(dup.uploadedAt.getTime() + 8 * 3600 * 1000).toISOString().slice(0, 10),
                     uploadedBy: dup.uploadedBy,
                   }
                 : null,
-              lines: s.lines.map((l) => ({
-                id: l.id,
-                lineIndex: l.lineIndex,
-                lineType: l.lineType,
-                docNoRaw: l.docNoRaw,
-                docNo: l.docNo,
-                date: l.date,
-                patientRaw: l.patientRaw,
-                patientCode: l.patientCode,
-                labCaseRef: l.labCaseRef,
-                description: l.description,
-                toothRaw: l.toothRaw,
-                qty: l.qty == null ? null : Number(l.qty),
-                unitPrice: l.unitPrice == null ? null : Number(l.unitPrice),
-                amount: Number(l.amount),
-                agingBucket: l.agingBucket,
-                matchedDocumentId: l.matchedDocumentId,
-                matchedLineId: l.matchedLineId,
-                matchBasis: l.matchBasis,
-                result: l.result,
-                resolution: l.resolution,
-                resolutionNote: l.resolutionNote,
-                resolvedBy: l.resolvedBy,
-                resolvedAt: l.resolvedAt,
-                followUpClosedAt: l.followUpClosedAt,
-                followUpClosedBy: l.followUpClosedBy,
-                pairMode: l.pairMode,
-                pairCostCaseId: l.pairCostCaseId,
-                carriedFromLineId: l.carriedFromLineId,
-                carriedFromMonth: l.carriedFromMonth,
-                system: systemView(l.matchedDocumentId, l.matchedLineId),
-              })),
+              lines: s.lines.map(mapLine),
+              // ★ 2026-10-12：「兩份加埋一齊對」— 組資料＋另一份單嘅行（顯示＋標記用，每行帶返自己 doc／段）
+              combined: group
+                ? {
+                    primarySectionId: group.primaryId,
+                    members: groupMembers,
+                    otherLines: otherLines.map((x) => ({ ...mapLine(x.l), sectionId: x.sectionId, docId: x.docId })),
+                  }
+                : null,
             }
           }),
         )
@@ -404,7 +434,10 @@ export async function DELETE(
     return NextResponse.json({ error: `呢張單仲有 ${matched} 條已配對行 — 要先解除配對（或作廢成本）先可以作廢` }, { status: 409 })
   }
 
+  // ★ 2026-10-12：月結單喺「兩份加埋一齊對」組入面 → 組入面其他段之前嘅確認（對住舊合計）打返未確認
+  let unconfirmedSectionIds: string[] = []
   const updated = await prisma.$transaction(async (tx: any) => {
+    if (doc.kind === 'STATEMENT') unconfirmedSectionIds = await unconfirmSections(tx, await otherGroupMembersOfDoc(tx, id))
     const r = await tx.labDocument.update({
       where: { id },
       data: {
@@ -423,7 +456,7 @@ export async function DELETE(
         entityId: id,
         clinicId: doc.clinicId,
         beforeJson: JSON.stringify({ status: doc.status, docNo: doc.docNo }),
-        afterJson: JSON.stringify({ status: 'VOID', voidReason: reason.trim() }),
+        afterJson: JSON.stringify({ status: 'VOID', voidReason: reason.trim(), ...(unconfirmedSectionIds.length ? { unconfirmedSectionIds } : {}) }),
         notes: `作廢單據 ${doc.docNo ?? '(no docNo)'}`,
       },
     })
@@ -439,5 +472,5 @@ export async function DELETE(
     await afterCarryChange(prisma, { sectionIds: secIds }, session.userId)
   }
 
-  return jsonNoStore({ document: { id: updated.id, status: updated.status, version: updated.version } })
+  return jsonNoStore({ document: { id: updated.id, status: updated.status, version: updated.version }, unconfirmedSectionIds })
 }

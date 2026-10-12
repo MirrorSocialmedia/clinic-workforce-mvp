@@ -19,7 +19,7 @@ export interface ProgStatementIn {
   status: string
   clinicId: string | null
   uploadClinicId: string | null
-  sections: Array<{ clinicId: string | null; status: string; id?: string; providerId?: string | null; diff?: number | null }>
+  sections: Array<{ clinicId: string | null; status: string; id?: string; providerId?: string | null; diff?: number | null; skipTodo?: boolean }>
 }
 export interface ProgCostIn { clinicId: string; labId: string; providerId?: string | null }
 
@@ -79,7 +79,8 @@ export function statementProgress(statements: ProgStatementIn[], costs: ProgCost
           if (sec.providerId) coveredDoc.add(`${sec.clinicId}|${s.labId}|${sec.providerId}`)
           else covered.add(`${sec.clinicId}|${s.labId}`)
         }
-        if (sec.status !== 'CONFIRMED') {
+        // skipTodo：「兩份加埋一齊對」組嘅非主段（主段已列，唔重複）
+        if (sec.status !== 'CONFIRMED' && !sec.skipTodo) {
           get(sec.clinicId).todo.push({ kind: 'OPEN', labId: s.labId, providerId: sec.providerId ?? null, docId: s.id, sectionId: sec.id, diff: sec.diff ?? null })
         }
       }

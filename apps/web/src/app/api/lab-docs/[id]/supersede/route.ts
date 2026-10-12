@@ -16,6 +16,7 @@ import { jsonNoStore } from '@/lib/api-response'
 import { reconcileSection, afterCarryChange } from '@/lib/labdoc/statement-reconcile'
 import { labdocAudit } from '@/lib/labdoc/audit'
 import { labdocScope, kioskDocGuard } from '@/lib/labdoc/kiosk-scope'
+import { otherGroupMembersOfDoc, unconfirmSections } from '@/lib/labdoc/statement-combine'
 
 const DOC_ID_RE = /^[a-z0-9]{25}$/
 
@@ -88,6 +89,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   let carried = 0
   let newSectionIds: string[] = []
   let oldSectionIds: string[] = []
+  let unconfirmedSectionIds: string[] = []
   try {
     await prisma.$transaction(async (tx: any) => {
       const n = await tx.labDocument.updateMany({
@@ -95,6 +97,8 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         data: { version: { increment: 1 } },
       })
       if (n.count === 0) throw new SupersedeConflict()
+      // ★ 2026-10-12：舊版喺「兩份加埋一齊對」組 → 組入面其他段之前嘅確認（對住舊版嘅行）打返未確認
+      unconfirmedSectionIds = await unconfirmSections(tx, await otherGroupMembersOfDoc(tx, oldDoc.id))
       const o = await tx.labDocument.updateMany({
         where: { id: oldDoc.id, status: { notIn: ['VOID', 'SUPERSEDED'] } },
         data: { status: 'SUPERSEDED', supersededById: newDoc.id },
@@ -113,6 +117,11 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       for (const ns of newSecs) {
         const os = oldSecs.find((x: any) => x.clinicId && x.clinicId === ns.clinicId && x.providerId === ns.providerId)
         if (!os) continue
+        // ★ 2026-10-12：組關係跟住新版（新版指返舊版指緊嗰段；指住舊版嘅段改指新版）
+        if (os.combineWithSectionId && !ns.combineWithSectionId && os.combineWithSectionId !== ns.id) {
+          await tx.labStatementSection.update({ where: { id: ns.id }, data: { combineWithSectionId: os.combineWithSectionId } })
+        }
+        await tx.labStatementSection.updateMany({ where: { combineWithSectionId: os.id, id: { not: ns.id } }, data: { combineWithSectionId: ns.id } })
         const pool = new Map<string, any[]>()
         for (const l of os.lines) {
           // 上月結轉副本唔帶（新版對數時會自己同步）
@@ -172,9 +181,9 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     userAgent: ua,
     notes: reason.trim(),
     before: { oldDocumentId: oldDoc.id, oldStatus: oldDoc.status },
-    after: { newDocumentId: newDoc.id, oldStatus: 'SUPERSEDED', supersededById: newDoc.id, statementMonth: oldDoc.statementMonth },
+    after: { newDocumentId: newDoc.id, oldStatus: 'SUPERSEDED', supersededById: newDoc.id, statementMonth: oldDoc.statementMonth, ...(unconfirmedSectionIds.length ? { unconfirmedSectionIds } : {}) },
   })
-  return NextResponse.json({ ok: true, oldDocumentId: oldDoc.id, oldStatus: 'SUPERSEDED', supersededById: newDoc.id, carriedResolutions: carried })
+  return NextResponse.json({ ok: true, oldDocumentId: oldDoc.id, oldStatus: 'SUPERSEDED', supersededById: newDoc.id, carriedResolutions: carried, unconfirmedSectionIds })
 }
 
 class SupersedeConflict extends Error {}

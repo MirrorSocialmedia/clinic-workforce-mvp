@@ -44,6 +44,7 @@ export async function resetSectionMatching(tx: any, sectionIds: string[]): Promi
   })
   await tx.labStatementSection.updateMany({
     where: { id: { in: sectionIds } },
-    data: { systemTotal: null, resultJson: Prisma.DbNull },
+    // ★ 2026-10-12：改範圍 → 唔再同舊範圍嘅另一份「加埋一齊對」
+    data: { systemTotal: null, resultJson: Prisma.DbNull, combineWithSectionId: null },
   })
 }
