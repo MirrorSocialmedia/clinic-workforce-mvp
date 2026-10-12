@@ -1,5 +1,5 @@
 // ★ cwm-labdoc P1：GET /api/lab-docs — 列表／檔案庫（§4.3、§11）
-// filters：kind、status（csv）、labId、clinicId、providerId、month、q、ids（csv）、page、hideVoid、notReconciled
+// filters：kind、status（csv）、labId、clinicId、providerId、month、q、ids（csv）、page、hideVoid、notReconciled、excludeProcessing
 // ★ 2026-10-11：hideVoid=1 → 唔列已作廢（到貨單／月結單分頁預設）；月結單 clinicId 篩分段診所；
 //   月結單每項帶 sectionSummary（診所／醫生／總數／確認進度由分段計 — statement-list.ts）；uploadedByName
 // → { items: [{document, labName, firstPageThumb, pageCount, uploadedByName}], total, page, pageSize }
@@ -15,6 +15,7 @@ import { statementListSummary } from '@/lib/labdoc/statement-list'
 import { labDocQueuePositions } from '@/lib/labdoc/queue-position'
 
 const PAGE_SIZE = 20
+const PROCESSING_STATUSES = ['UPLOADED', 'EXTRACTING', 'EXTRACT_FAILED']
 
 export async function GET(req: NextRequest) {
   const auth = await requireAuth(req, 'GET', req.url)
@@ -47,9 +48,15 @@ export async function GET(req: NextRequest) {
   else if (scope) where.clinicId = { in: scope }
   if (kind === 'INVOICE' || kind === 'STATEMENT') where.kind = kind
   if (status?.length) where.status = { in: status }
-  // ★ cwm-labstmtprog-20261012：只睇未對（月結單）—— 未全部段確認（唔係已對），已作廢／重複／已取代都唔列
-  else if (sp.get('notReconciled') === '1') where.status = { notIn: ['RECONCILED', 'VOID', 'SUPERSEDED', 'DUPLICATE'] }
-  else if (hideVoid) where.status = { not: 'VOID' }
+  else {
+    const notIn = new Set<string>()
+    // ★ cwm-labstmtprog-20261012：只睇未對（月結單）—— 未全部段確認（唔係已對），已作廢／重複／已取代都唔列
+    if (sp.get('notReconciled') === '1') for (const s of ['RECONCILED', 'VOID', 'SUPERSEDED', 'DUPLICATE']) notIn.add(s)
+    else if (hideVoid) notIn.add('VOID')
+    // ★ 2026-10-11：excludeProcessing=1 → 排隊／讀緊／讀唔到嘅唔喺主列表（列表頂「處理中」一欄另外攞，唔受月份篩選）
+    if (sp.get('excludeProcessing') === '1') for (const s of PROCESSING_STATUSES) notIn.add(s)
+    if (notIn.size > 0) where.status = { notIn: [...notIn] }
+  }
   if (labId) where.labId = labId
   if (clinicId) {
     // 月結單：診所喺分段（一份可以有幾間）；到貨單：單據診所

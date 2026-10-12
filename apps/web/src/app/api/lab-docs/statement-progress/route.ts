@@ -1,7 +1,8 @@
 // ★ cwm-labstmtprog-20261012：GET /api/lab-docs/statement-progress?month=YYYY-MM
 //   某月 Lab 月結單逐間診所：已對／對數中／未對＋未收到（有 Lab 成本但冇月結單）—— 計法見 lib/labdoc/statement-progress.ts
 //   範圍同 /api/lab-docs（labdocScope：KIOSK = 自己店；有 lab 權限 = 全集團）。純讀，唔出病人資料。
-// → { month, clinics: [{ clinicId, clinicName, reconciled, inProgress, open, missingLabs: string[] }], unassigned }
+// → { month, clinics: [{ clinicId, clinicName, reconciled, inProgress, open, missingLabs: string[], todo: [...] }], unassigned }
+// ★ 2026-10-12：todo 逐項（kind OPEN 未對／MISSING 未收到，labName、providerName、docId、sectionId、diff）
 export const dynamic = 'force-dynamic'
 
 import { NextRequest } from 'next/server'
@@ -24,22 +25,38 @@ export async function GET(req: NextRequest) {
 
   const statements = await prisma.labDocument.findMany({
     where: { kind: 'STATEMENT', statementMonth: month, status: { notIn: [...STATEMENT_EXCLUDED] } },
-    select: { id: true, labId: true, status: true, clinicId: true, uploadClinicId: true, sections: { select: { clinicId: true, status: true } } },
+    select: {
+      id: true, labId: true, status: true, clinicId: true, uploadClinicId: true,
+      sections: { orderBy: { sectionIndex: 'asc' }, select: { id: true, clinicId: true, providerId: true, status: true, resultJson: true } },
+    },
   })
   const costs = await prisma.costCase.findMany({
     where: { category: 'LAB', periodMonth: month, status: { not: 'VOID' }, labId: { not: null }, ...(scope ? { clinicId: { in: scope } } : {}) },
-    select: { clinicId: true, labId: true },
-    distinct: ['clinicId', 'labId'],
+    select: { clinicId: true, labId: true, providerId: true },
+    distinct: ['clinicId', 'labId', 'providerId'],
   })
-  const r = statementProgress(statements, costs.map(c => ({ clinicId: c.clinicId, labId: c.labId as string })))
+  const r = statementProgress(
+    statements.map(s => ({
+      ...s,
+      sections: s.sections.map(sec => {
+        const rj = (sec.resultJson ?? {}) as { mode?: string; diff?: unknown }
+        return { id: sec.id, clinicId: sec.clinicId, providerId: sec.providerId, status: sec.status, diff: rj.mode === 'COST' && typeof rj.diff === 'number' ? rj.diff : null }
+      }),
+    })),
+    costs.map(c => ({ clinicId: c.clinicId, labId: c.labId as string, providerId: c.providerId })),
+  )
   const clinicsOut = scope ? r.clinics.filter(c => scope.includes(c.clinicId)) : r.clinics
 
-  const [clinics, labs] = await Promise.all([
+  const todoLabIds = clinicsOut.flatMap(c => c.todo.map(t => t.labId)).filter((x): x is string => !!x)
+  const todoProvIds = [...new Set(clinicsOut.flatMap(c => c.todo.map(t => t.providerId)).filter((x): x is string => !!x))]
+  const [clinics, labs, provs] = await Promise.all([
     prisma.clinic.findMany({ where: { id: { in: clinicsOut.map(c => c.clinicId) } }, select: { id: true, name: true, shortName: true } }),
-    prisma.lab.findMany({ where: { id: { in: [...new Set(clinicsOut.flatMap(c => c.missingLabIds))] } }, select: { id: true, name: true } }),
+    prisma.lab.findMany({ where: { id: { in: [...new Set([...clinicsOut.flatMap(c => c.missingLabIds), ...todoLabIds])] } }, select: { id: true, name: true } }),
+    todoProvIds.length ? prisma.provider.findMany({ where: { id: { in: todoProvIds } }, select: { id: true, name: true } }) : Promise.resolve([] as Array<{ id: string; name: string }>),
   ])
   const clinicName = new Map(clinics.map(c => [c.id, c.name || c.shortName || c.id]))
   const labName = new Map(labs.map(l => [l.id, l.name]))
+  const provName = new Map(provs.map(p => [p.id, p.name]))
 
   return jsonNoStore({
     month,
@@ -51,6 +68,17 @@ export async function GET(req: NextRequest) {
         inProgress: c.inProgress,
         open: c.open,
         missingLabs: c.missingLabIds.map(id => labName.get(id) ?? id).sort((a, b) => a.localeCompare(b)),
+        // 未對先、未收到後；同類按 Lab 名
+        todo: c.todo
+          .map(t => ({
+            kind: t.kind,
+            labName: t.labId ? labName.get(t.labId) ?? '未識別 Lab' : '未識別 Lab',
+            providerName: t.providerId ? provName.get(t.providerId) ?? null : null,
+            docId: t.docId ?? null,
+            sectionId: t.sectionId ?? null,
+            diff: t.diff ?? null,
+          }))
+          .sort((a, b) => (a.kind === b.kind ? a.labName.localeCompare(b.labName) : a.kind === 'OPEN' ? -1 : 1)),
       }))
       .sort((a, b) => a.clinicName.localeCompare(b.clinicName, 'zh-HK')),
     // 唔知邊間店嘅單（未分段又冇單頭店／上傳店）—— 只畀全集團範圍睇
