@@ -5,8 +5,8 @@
 // ============================================================
 import * as XLSX from 'xlsx'
 
-export type ChequeKind = 'PAYROLL_ITEM' | 'PAYOUT_RUN' | 'LAB_AMOUNT'
-export const KIND_LABEL: Record<ChequeKind, string> = { PAYROLL_ITEM: '員工', PAYOUT_RUN: '醫生', LAB_AMOUNT: 'Lab' }
+export type ChequeKind = 'PAYROLL_ITEM' | 'PAYOUT_RUN' | 'LAB_AMOUNT' | 'MANUAL'
+export const KIND_LABEL: Record<ChequeKind, string> = { PAYROLL_ITEM: '員工', PAYOUT_RUN: '醫生', LAB_AMOUNT: 'Lab', MANUAL: '手動' } // ★ cwm-chequemanual-20261013
 export const STATUS_LABEL: Record<string, string> = { PRINTED: '已出票', VOID: '已作廢' }
 
 export interface RecordFilters {
@@ -25,7 +25,7 @@ export interface ChequeRecord {
   periodMonth: string
   kind: ChequeKind
   payeeName: string
-  /** 對應人：員工花名／醫生「Dr.Ho · 何嘉俊」／Lab 名 */
+  /** 對應人：員工花名／醫生「Dr.Ho · 何嘉俊」／Lab 名／手動票用途 */
   refLabel: string
   clinicName: string
   accountLabel: string
@@ -74,7 +74,7 @@ const r2 = (n: number) => Math.round(n * 100) / 100
 
 /** 合計：已出票（唔計作廢）按類別；作廢另計 */
 export function summarize(rows: ChequeRecord[]): Summary {
-  const kinds: ChequeKind[] = ['PAYROLL_ITEM', 'PAYOUT_RUN', 'LAB_AMOUNT']
+  const kinds: ChequeKind[] = ['PAYROLL_ITEM', 'PAYOUT_RUN', 'LAB_AMOUNT', 'MANUAL']
   const byKind = kinds.map(kind => {
     const list = rows.filter(r => r.kind === kind && r.status !== 'VOID')
     return { kind, label: KIND_LABEL[kind], count: list.length, amount: r2(list.reduce((a, r) => a + r.amount, 0)) }

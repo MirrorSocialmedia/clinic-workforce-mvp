@@ -33,7 +33,7 @@ test('summarize：作廢唔計入已出票合計；按類別分', () => {
     rec({ kind: 'LAB_AMOUNT', amount: 1230, status: 'VOID', voidReason: '印歪' }),
     rec({ kind: 'LAB_AMOUNT', amount: 1230 }),
   ])
-  assert.deepEqual(s.byKind.map(k => [k.kind, k.count, k.amount]), [['PAYROLL_ITEM', 2, 25009.64], ['PAYOUT_RUN', 1, 5000], ['LAB_AMOUNT', 1, 1230]])
+  assert.deepEqual(s.byKind.map(k => [k.kind, k.count, k.amount]), [['PAYROLL_ITEM', 2, 25009.64], ['PAYOUT_RUN', 1, 5000], ['LAB_AMOUNT', 1, 1230], ['MANUAL', 0, 0]])
   assert.deepEqual(s.printed, { count: 4, amount: 31239.64 })
   assert.deepEqual(s.void, { count: 1, amount: 1230 })
 })
