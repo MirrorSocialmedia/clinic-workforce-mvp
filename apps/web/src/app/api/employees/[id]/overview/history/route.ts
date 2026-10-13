@@ -4,6 +4,7 @@ import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { resolveClinicScope, canSeeConfidential } from '@/lib/scope-helpers'
 import { toHKDateStr, getMonthRange, periodMonthKey } from '@/lib/hk-date'
+import { wageHistoryRows } from '@/lib/adw'
 
 // ★ 呢條 route 只可以呼叫 lib/ 嘅共用函數，唔可以自己由原始表格砌計算。
 
@@ -117,13 +118,11 @@ export async function GET(
   }))
 
   // 4) Wage history (工資歷史)
-  const wageHistory = await prisma.wageHistory.findMany({
-    where: {
-      employeeId: params.id,
-      periodMonth: { gte: toHKDateStr(startMonth).slice(0, 7), lte: toHKDateStr(endMonth).slice(0, 7) },
-    },
-    orderBy: { periodMonth: 'desc' },
-  })
+  //   ★ cwm-empoverview-20261014：以前淨係讀 WageHistory（舊系統匯入／人手補錄）→ 系統確認咗嘅計糧月份唔會出現。
+  //   而家同 ADW 一樣合併：已確認計糧（FINALIZED／EXPORTED）＞ 歷史工資 ＞ 計糧草稿（灰色、唔計 ADW）。
+  const fromMonth = toHKDateStr(startMonth).slice(0, 7)
+  const toMonth = toHKDateStr(endMonth).slice(0, 7)
+  const wageHistory = await wageHistoryRows(prisma, params.id, fromMonth, toMonth)
 
   return NextResponse.json({
     payroll: payrollHistory,
@@ -140,6 +139,7 @@ export async function GET(
     })),
     wageHistory: wageHistory.map(w => ({
       periodMonth: w.periodMonth,
+      source: w.source,
       totalWage: w.totalWage,
       excludedDays: w.excludedDays,
       excludedWage: w.excludedWage,

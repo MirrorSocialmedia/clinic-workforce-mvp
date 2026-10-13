@@ -8,6 +8,7 @@ import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { prisma } from '@/lib/prisma'
 import { jsonNoStore } from '@/lib/api-response'
 import { payoutClinicGuard } from '@/lib/payout/kiosk-scope'
+import { doctorReviewProgress } from '@/lib/payout/daily-doctor-review'
 
 export async function GET(
   req: NextRequest,
@@ -40,6 +41,16 @@ export async function GET(
   const adjustments = await prisma.payoutAdjustment.findMany({
     where: { runId: params.id },
   })
+  // ★ cwm-dailyreview2-20261014：每日收款核對同事 —— 生成時「照樣生成」嘅留名＋而家進度
+  const ack = await prisma.auditLog.findFirst({
+    where: { entity: 'PayoutRun', entityId: params.id, action: 'PAYOUT_DOCTOR_REVIEW_ACK' },
+    orderBy: { createdAt: 'desc' },
+    select: { notes: true, createdAt: true, actor: { select: { name: true } } },
+  })
+  const doctorReview = {
+    ack: ack ? { actorName: ack.actor?.name ?? '', at: ack.createdAt.toISOString(), notes: ack.notes ?? '' } : null,
+    now: run.clinicId ? await doctorReviewProgress(run.providerId, run.clinicId, run.periodMonth).catch(() => null) : null,
+  }
   // ★ cwm-adjedit-20261013：草稿月結單（解鎖後）存嘅 adjustAmount 係生成嗰陣嘅數；調整之後可以被改／刪／新增
   //   → 回傳即場數，頁面唔夾就提示「重新生成」（鎖定嘅月結單讀快照，唔受影響）
   let liveAdjustAmount: number | null = null
@@ -69,6 +80,7 @@ export async function GET(
       adjustAmount: Number(run.adjustAmount),
       liveAdjustAmount,
       totalAmount: Number(run.totalAmount),
+      doctorReview,
       adjustments: adjustments.map((a: any) => ({
         ...a,
         amount: Number(a.amount),

@@ -2430,6 +2430,26 @@ model DailyRevenueCheck {
   @@index([clinicId, date])
 }
 
+/// ★ cwm-dailyreview2-20261014：每日大數「核對同事」覆核 —— 多日畫面（指定醫生＋診所）最右邊格仔
+///   一行 = 呢位醫生 × 呢間店 × 呢一日；snapshotJson = 剔嗰陣逐付款方式金額（之後有變 → 前端紅「!」）
+///   取消 = revokedAt（唔刪，留紀錄）；同一格同一時間只會有一條有效（partial unique index，見 migration）
+model DailyDoctorReview {
+  id           String    @id @default(cuid())
+  clinicId     String
+  providerId   String
+  date         String // YYYY-MM-DD（香港日）
+  snapshotJson Json // { colKey: amount }（非 0）
+  doctorRaw    Decimal   @db.Decimal(12, 2)
+  storeTotal   Decimal   @db.Decimal(12, 2)
+  reviewedBy   String // 登入帳號 userId
+  reviewerName String // 快照：個人帳號 = 帳號名；店舖帳號 = 揀咗嘅同事名
+  reviewedAt   DateTime  @default(now())
+  revokedAt    DateTime?
+  revokedBy    String?
+
+  @@index([clinicId, providerId, date])
+}
+
 /// ★ cwm-dailyv2-20261007：每日大數逐格核對（醫生 × 付款方式）
 model DailyRevenueCellCheck {
   id          String   @id @default(cuid())

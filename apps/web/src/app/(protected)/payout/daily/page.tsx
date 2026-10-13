@@ -7,6 +7,8 @@
  *   ② 揀醫生 → 行 = 逐日（同醫生月結 Excel「A 逐日收款」一樣）
  * 顏色跟 Excel：藍字 = 系統帶入，黑字粗體 = 合計，灰字 = 唔計，黃底 = 最終金額。
  * 數字同 Excel 匯出同一個 API（/api/payout-runs/daily），唔准前端自己計。
+ * ★ cwm-dailyreview2-20261014：多日（指定醫生＋診所）最右邊加「核對」格仔俾核對同事剔；
+ *   表格收窄（日期「10-04 日」釘左邊、格入面唔寫 $、成段冇數嘅付款方式收埋）
  */
 import { Fragment, useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { apiFetch } from '@/lib/api-client'
@@ -24,13 +26,18 @@ import { cellState, cellTickable, cellGroupOf, cellFlagText, cellProgressOf, row
 import type { DayCheckState } from '@/lib/payout/daily-check' // ★ cwm-dailyv3-20261010 §5b：type-only（佢 import prisma）
 import { DailyCheckPanel } from '@/components/payout/DailyCheckPanel'
 import { InlineDayCheck } from '@/components/payout/InlineDayCheck' // ★ cwm-dailyv3-20261010 §5b：③ 全店核對欄就地核對
+import { hasRevenue, reviewStatus, reviewProgress, type DoctorReviewRecord } from '@/lib/payout/daily-doctor-review-state' // ★ cwm-dailyreview2-20261014（純函數）
 
 const SECTION = '#1F4E79'
 const BLUE = '#0000ff'
 const GRAY = '#808080'
 
+// ★ cwm-dailyreview2-20261014：格入面唔寫「$」（全部都係港幣），兩位小數照留 —— 慳闊度
 const money = (n: number | null | undefined): string =>
-  n ? '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : ''
+  n ? n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : ''
+const WEEK = ['日', '一', '二', '三', '四', '五', '六']
+/** 逐日行：「2026-10-04（日）」→「10-04 日」（年份喺標題） */
+const shortDay = (d: string) => /^\d{4}-\d{2}-\d{2}$/.test(d) ? `${d.slice(5)} ${WEEK[new Date(`${d}T12:00:00+08:00`).getUTCDay()]}` : d
 
 function weekStartOf(d: string): string {
   const dow = new Date(`${d}T12:00:00+08:00`).getUTCDay()
@@ -80,6 +87,13 @@ export default function DailyRevenuePage() {
   const [dayCanCheck, setDayCanCheck] = useState(false)
   const [checkReloadKey, setCheckReloadKey] = useState(0)
   const [inlineCheckDate, setInlineCheckDate] = useState<string | null>(null)
+  // ★ cwm-dailyreview2-20261014：核對同事覆核（多日＋指定醫生＋診所）
+  const [reviews, setReviews] = useState<Record<string, DoctorReviewRecord> | null>(null)
+  const [reviewStaff, setReviewStaff] = useState<{ employeeId: string; name: string; onShift: boolean }[] | null>(null)
+  const [reviewStaffId, setReviewStaffId] = useState('')
+  const [reviewBusy, setReviewBusy] = useState(false)
+  const [reviewReloadKey, setReviewReloadKey] = useState(0)
+  const [showAllMethods, setShowAllMethods] = useState(false)
   // cellMode / cellSingleDate 喺 activeClinicId 定義之後先算（見下）
 
   useEffect(() => {
@@ -140,6 +154,8 @@ export default function DailyRevenuePage() {
     : report && report.mode === 'byDay' && activeClinicId && providerId ? 'byDay'
     : null
   const cellSingleDate = cellMode === 'single' ? from : null
+  // ★ cwm-dailyreview2-20261014：核對格仔只喺多日（指定醫生＋診所）先出
+  const reviewMode = cellMode === 'byDay' && !!report && report.from !== report.to
   // ★ cwm-dailyv3fix-20261010：揀咗診所 → 醫生下拉只列呢間店嘅醫生。
   //   名單同醫生月結頁同一來源（POST /api/payout-runs/clinics → 綁咗呢間店 ＋ 嗰個月有收入／轉介），
   //   日期範圍跨月就逐月攞再合併；攞唔到就照列全部（唔好令人揀唔到醫生）。
@@ -254,6 +270,54 @@ export default function DailyRevenuePage() {
       .catch(() => { if (!cancelled) setDayChecks(null) })
     return () => { cancelled = true }
   }, [cellMode, activeClinicId, report?.from, report?.to, checkReloadKey, reloadKey])
+
+  // ★ cwm-dailyreview2-20261014：拉核對同事覆核紀錄（店舖帳號會連同事名單）
+  useEffect(() => {
+    if (!reviewMode || !activeClinicId || !providerId) { setReviews(null); setReviewStaff(null); return }
+    let cancelled = false
+    const q = new URLSearchParams({ clinicId: activeClinicId, providerId, from: report!.from, to: report!.to })
+    apiFetch<{ reviews: DoctorReviewRecord[]; staff: { employeeId: string; name: string; onShift: boolean }[] | null }>(`/api/payout-runs/daily/doctor-review?${q}`)
+      .then(d => {
+        if (cancelled) return
+        setReviews(Object.fromEntries(d.reviews.map(r => [r.date, r])))
+        setReviewStaff(d.staff)
+      })
+      .catch(() => { if (!cancelled) setReviews(null) })
+    return () => { cancelled = true }
+  }, [reviewMode, activeClinicId, providerId, report?.from, report?.to, reloadKey, reviewReloadKey])
+  // 店舖帳號揀過嘅核對同事記住（同一部機下次唔使再揀）
+  useEffect(() => {
+    if (!reviewStaff) return
+    try {
+      const saved = sessionStorage.getItem(`dailyReviewStaff:${activeClinicId}`) || ''
+      if (saved && reviewStaff.some(n => n.employeeId === saved)) setReviewStaffId(saved)
+    } catch { /* 冇 storage 都照用 */ }
+  }, [reviewStaff, activeClinicId])
+  const pickReviewStaff = (id: string) => {
+    setReviewStaffId(id)
+    try { sessionStorage.setItem(`dailyReviewStaff:${activeClinicId}`, id) } catch { /* 冇 storage（私密模式）就唔記，下次再揀 */ }
+  }
+  const reviewDisabledReason = reviewStaff && !reviewStaffId ? '先揀核對同事名' : null
+  const postReview = useCallback(async (dates: string[], checked: boolean) => {
+    if (!report || !activeClinicId || !providerId || reviewBusy || dates.length === 0) return
+    setReviewBusy(true)
+    try {
+      const r = await apiFetch<{ reviewed: string[]; unchanged: string[]; skipped: { date: string; reason: string }[]; revoked: string[] }>('/api/payout-runs/daily/doctor-review', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ clinicId: activeClinicId, providerId, from: report.from, to: report.to, dates, checked, staffEmployeeId: reviewStaffId || undefined }),
+      })
+      if (r.skipped.length > 0) alert(`以下日子冇剔到：\n${r.skipped.map(x => `${shortDay(x.date)}：${x.reason}`).join('\n')}`)
+    } catch (e: any) {
+      alert(e?.message || '核對失敗')
+    } finally {
+      setReviewBusy(false)
+      setReviewReloadKey(k => k + 1)
+    }
+  }, [report, activeClinicId, providerId, reviewBusy, reviewStaffId])
+  const reviewDays = reviewMode && report ? report.rows.filter(r => /^\d{4}-\d{2}-\d{2}$/.test(r.key)) : []
+  const reviewProg = reviewMode && reviews
+    ? reviewProgress(reviewDays.map(r => ({ date: r.key, byMethod: r.byMethod })), new Map(Object.entries(reviews)))
+    : null
 
   // ★ ④ + cwm-dailyv3-20261010 §5b：剔格 —— OPEN→tick、OK→取消、CHANGED→用新金額覆寫、STALE→取消（server 重算金額，唔信前端）
   const toggleCell = useCallback(async (date: string, rowKey: string, colKey: string, st: 'OPEN' | 'OK' | 'CHANGED' | 'STALE') => {
@@ -374,16 +438,62 @@ export default function DailyRevenuePage() {
       <button type="button" onClick={() => setInlineCheckDate(inlineCheckDate === date ? null : date)}
         className={`h-6 px-2 rounded border text-xs bg-white ${danger ? 'border-red-600 text-red-700 hover:bg-red-50' : 'border-green-600 text-green-700 hover:bg-green-50'}`}>{label}</button>
     )
+    // ★ cwm-dailyreview2-20261014：收窄 —— 有權核對就淨係出掣（唔再「未核對＋掣」兩行）
     if (dc.status === 'CHANGED') return (
-      <td style={td('#dc2626', { textAlign: 'center' })}>
-        <span className="inline-flex flex-wrap items-center justify-center gap-1">⚠ 有變{dayCanCheck && btn('重新核對', true)}</span>
+      <td style={td('#dc2626', { textAlign: 'center' })} title="核對後有變">
+        {dayCanCheck ? btn('⚠ 重新核對', true) : '⚠ 有變'}
       </td>
     )
     return (
       <td style={td('#b45309', { textAlign: 'center' })}>
-        <span className="inline-flex flex-wrap items-center justify-center gap-1">未核對{dayCanCheck && btn('核對', false)}</span>
+        {dayCanCheck ? btn('核對', false) : '未核對'}
       </td>
     )
+  }
+
+  // ★ cwm-dailyreview2-20261014：最右邊「核對」格仔（核對同事）
+  const reviewCell = (r: DailyRow): React.ReactNode => {
+    const rec = reviews?.[r.key] ?? null
+    const has = hasRevenue(r.byMethod)
+    if (!reviews || (!has && !rec)) return <td style={td(GRAY, { textAlign: 'center' })}>{''}</td>
+    const st = reviewStatus(r.byMethod, rec)
+    const when = rec ? `${rec.reviewerName} ${rec.reviewedAt.slice(5, 10)} ${hhmmOf(rec.reviewedAt) ?? ''}`.trim() : ''
+    const disabled = reviewBusy || !!reviewDisabledReason
+    let title = reviewDisabledReason ?? '剔 = 核對同事已核對呢日'
+    let style: React.CSSProperties = { background: '#fff', borderColor: '#64748b' }
+    let mark: React.ReactNode = null
+    let onClick: () => void = () => { void postReview([r.key], true) }
+    if (st === 'OK') {
+      title = reviewDisabledReason ?? `✓ ${when}（再撳 = 取消）`
+      style = { background: '#1d4ed8', borderColor: '#1e40af' }
+      mark = <span style={{ color: '#fff', fontSize: 11, lineHeight: 1 }}>✓</span>
+      onClick = () => { if (confirm(`取消 ${shortDay(r.key)} 嘅核對？（${when}）`)) postReview([r.key], false) }
+    } else if (st === 'CHANGED') {
+      title = reviewDisabledReason ?? (has ? `核對後有變（${when}）— 撳 = 用新數再剔` : `已核對但而家冇數（${when}）— 撳 = 取消`)
+      style = { background: '#fff', borderColor: '#dc2626' }
+      mark = <span style={{ color: '#dc2626', fontSize: 12, fontWeight: 900, lineHeight: 1 }}>!</span>
+      onClick = has ? () => postReview([r.key], true) : () => postReview([r.key], false)
+    }
+    return (
+      <td style={td(GRAY, { textAlign: 'center' })}>
+        <button type="button" role="checkbox" aria-checked={st === 'OK' ? 'true' : st === 'CHANGED' ? 'mixed' : 'false'}
+          aria-label={`核對同事 ${shortDay(r.key)}`} title={title} disabled={disabled} onClick={onClick}
+          className="inline-flex w-[18px] h-[18px] rounded-[4px] border-[1.5px] items-center justify-center disabled:opacity-50 align-middle" style={style}>
+          {mark}
+        </button>
+      </td>
+    )
+  }
+  const reviewAllOk = !!reviewProg && reviewProg.total > 0 && reviewProg.ok === reviewProg.total
+  const reviewHeaderClick = () => {
+    if (!reviewProg || !reviews || reviewProg.total === 0) return
+    if (reviewAllOk) {
+      const dates = reviewDays.filter(r => hasRevenue(r.byMethod)).map(r => r.key)
+      if (confirm(`取消呢段日子全部 ${dates.length} 日嘅核對？`)) postReview(dates, false)
+      return
+    }
+    const todo = [...reviewProg.pendingDates, ...reviewProg.changedDates].sort()
+    if (confirm(`一次過核對 ${todo.length} 日？\n${todo.map(shortDay).join('、')}${reviewProg.ok ? `\n（已核對 ${reviewProg.ok} 日唔使再剔）` : ''}`)) postReview(todo, true)
   }
 
   const startSync = useCallback(() => { void startSyncFor(activeClinicId, from, to || from) }, [startSyncFor, activeClinicId, from, to])
@@ -404,17 +514,26 @@ export default function DailyRevenuePage() {
 
   // ★ cwm-dailysticky-20261006：表頭向下捲時釘住（sticky 要配合下面 TABLE_BOX 做捲動框；
   //   border-collapse 下 sticky 格嘅邊框唔跟住格畫：底線用 inset 陰影補，top:-1 遮住頂邊 1px 縫，唔會見到後面捲過嘅字）
-  const th: React.CSSProperties = { border: '1px solid #d9dee4', padding: '7px 9px', background: '#f3f5f8', fontWeight: 700, textAlign: 'right', whiteSpace: 'nowrap', fontSize: 12, textTransform: 'none', letterSpacing: 'normal', position: 'sticky', top: -1, zIndex: 1, boxShadow: 'inset 0 -1px 0 #d9dee4' }
+  const th: React.CSSProperties = { border: '1px solid #d9dee4', padding: '6px 6px', background: '#f3f5f8', fontWeight: 700, textAlign: 'right', whiteSpace: 'nowrap', fontSize: 12, textTransform: 'none', letterSpacing: 'normal', position: 'sticky', top: -1, zIndex: 1, boxShadow: 'inset 0 -1px 0 #d9dee4' }
   // 捲動框：橫向（付款方式多）＋直向（一個月 30 行）都喺框內捲，表頭先釘得住
   const TABLE_BOX: React.CSSProperties = { overflow: 'auto', maxHeight: '70vh' }
   const td = (color: string, extra: React.CSSProperties = {}): React.CSSProperties => ({
-    border: '1px solid #d9dee4', padding: '7px 9px', textAlign: 'right', whiteSpace: 'nowrap',
+    border: '1px solid #d9dee4', padding: '6px 6px', textAlign: 'right', whiteSpace: 'nowrap',
     fontVariantNumeric: 'tabular-nums', color, ...extra,
   })
   const firstCol = report?.mode === 'byDoctor' ? '醫生' : '日期'
   // ★ cwm-dailyv3：Clinic 雜項行（A 區淺橙底、名唔可以撳；B 區跳過）
   const isClinicRow = (r: DailyRow) => r.key === CLINIC_ROW_KEY
   const isEmptyRow = (r: DailyRow) => r.storeTotal === 0 && r.doctorRaw === 0 && Object.values(r.byMethod).every(v => v === 0)
+  // ★ cwm-dailyreview2-20261014：第一欄（日期／醫生）釘喺左邊，橫向捲都見到
+  const stickyFirst = (bg: string): React.CSSProperties => ({ position: 'sticky', left: 0, zIndex: 1, background: bg, boxShadow: 'inset -1px 0 0 #d9dee4' })
+  const rowBg = (r: DailyRow) => report?.mode === 'byDay' && isEmptyRow(r) ? '#f3f4f6' : isClinicRow(r) ? '#fff7e6' : '#fff'
+  // ★ cwm-dailyreview2-20261014：成段日子都冇數嘅付款方式收埋（有舊 tick 紀錄嘅欄照出；Excel 唔變）
+  const visibleMethods = !report ? [] : report.methods.filter(m => showAllMethods
+    || report.rows.some(r => Math.abs(r.byMethod[m.key] ?? 0) > 0.005)
+    || (!!cellChecks && Object.keys(cellChecks).some(k => k.endsWith(`|${m.key}`))))
+  const hiddenMethods = report ? report.methods.length - visibleMethods.length : 0
+  const extraCols = (cellMode === 'byDay' ? 1 : 0) + (reviewMode ? 1 : 0)
 
   return (
     <div className="p-6 max-w-7xl mx-auto">
@@ -502,6 +621,20 @@ export default function DailyRevenuePage() {
           <div className="px-4 py-3 flex items-baseline gap-3 flex-wrap">
             <div className="text-lg font-bold">{report.title}</div>
             <div className="text-xs text-gray-500">{report.mode === 'byDoctor' ? '行 = 醫生（撳醫生名睇逐日）' : '行 = 逐日'}</div>
+            <div className="flex-1" />
+            {reviewMode && reviewStaff && (
+              <label className="text-xs text-gray-600 flex items-center gap-1">核對同事
+                <select value={reviewStaffId} onChange={e => pickReviewStaff(e.target.value)} className="h-7 px-1 border rounded text-xs" aria-label="核對同事">
+                  <option value="">揀名…</option>
+                  {reviewStaff.map(n => <option key={n.employeeId} value={n.employeeId}>{n.name}{n.onShift ? '（當更）' : ''}</option>)}
+                </select>
+              </label>
+            )}
+            {(hiddenMethods > 0 || showAllMethods) && (
+              <button type="button" className="text-xs underline text-gray-500" onClick={() => setShowAllMethods(v => !v)}>
+                {showAllMethods ? '收埋冇數嘅付款方式' : `＋ 顯示全部付款方式（${hiddenMethods} 個冇數）`}
+              </button>
+            )}
           </div>
 
           <div style={{ background: SECTION, color: '#fff', fontWeight: 700, fontSize: 13, padding: '6px 16px' }}>
@@ -517,8 +650,8 @@ export default function DailyRevenuePage() {
             <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: 13 }}>
               <thead>
                 <tr>
-                  <th style={{ ...th, textAlign: 'left' }}>{firstCol}</th>
-                  {report.methods.map(m => (
+                  <th style={{ ...th, textAlign: 'left', left: 0, zIndex: 3 }}>{firstCol}</th>
+                  {visibleMethods.map(m => (
                     <th key={m.key} style={{ ...th, color: m.storeIncome || m.doctorIncome ? undefined : GRAY, verticalAlign: 'bottom' }}>
                       {m.label}
                       {/* ★ cwm-storedoc-20261011：計唔計店舖營收／醫生收入（跟付款方式規則） */}
@@ -527,23 +660,37 @@ export default function DailyRevenuePage() {
                   ))}
                   <th style={{ ...th, background: '#fff8c5', color: '#5c4a00', verticalAlign: 'bottom' }}>店舖營收</th>
                   <th style={{ ...th, background: '#dbeafe', color: '#1e3a8a', verticalAlign: 'bottom' }}>醫生收入</th>
-                  <th style={th}>SP 筆數</th>
-                  {cellMode === 'byDay' && <th style={th}>全店核對</th>}
+                  <th style={th} title="SP 筆數">SP</th>
+                  {cellMode === 'byDay' && <th style={th} title="埋數同事：全店當日核對">埋數</th>}
+                  {reviewMode && (
+                    <th style={{ ...th, textAlign: 'center', background: '#eff6ff', color: '#1e3a8a' }}>
+                      核對
+                      <span style={{ display: 'block', marginTop: 2 }}>
+                        <button type="button" role="checkbox" aria-checked={reviewAllOk ? 'true' : 'false'} aria-label="核對同事：一次過剔晒"
+                          title={reviewDisabledReason ?? (reviewAllOk ? '全部已核對（撳 = 全部取消）' : '一次過剔晒呢段日子有收款嘅日')}
+                          disabled={reviewBusy || !!reviewDisabledReason || !reviewProg || reviewProg.total === 0} onClick={reviewHeaderClick}
+                          className="inline-flex w-[16px] h-[16px] rounded-[4px] border-[1.5px] items-center justify-center disabled:opacity-40"
+                          style={reviewAllOk ? { background: '#1d4ed8', borderColor: '#1e40af' } : { background: '#fff', borderColor: '#64748b' }}>
+                          {reviewAllOk && <span style={{ color: '#fff', fontSize: 10, lineHeight: 1 }}>✓</span>}
+                        </button>
+                      </span>
+                    </th>
+                  )}
                 </tr>
               </thead>
               <tbody>
                 {report.rows.length === 0 && (
-                  <tr><td colSpan={report.methods.length + 4 + (cellMode === 'byDay' ? 1 : 0)} style={{ ...td(GRAY), textAlign: 'center', padding: 24 }}>呢段日子冇收款</td></tr>
+                  <tr><td colSpan={visibleMethods.length + 4 + extraCols} style={{ ...td(GRAY), textAlign: 'center', padding: 24 }}>呢段日子冇收款</td></tr>
                 )}
                 {report.rows.map(r => (
                   <Fragment key={r.key}>
                     <tr style={report.mode === 'byDay' && isEmptyRow(r) ? { background: '#f3f4f6' } : isClinicRow(r) ? { background: '#fff7e6' } : undefined}>
-                      <td style={td(BLUE, { textAlign: 'left' })}>
+                      <td style={td(BLUE, { textAlign: 'left', ...stickyFirst(rowBg(r)) })} title={report.mode === 'byDay' ? r.label : undefined}>
                         {report.mode === 'byDoctor' && !isClinicRow(r) && !r.key.startsWith('ext:')
                           ? <button type="button" className="hover:underline" style={{ color: BLUE }} onClick={() => setProviderId(r.key)}>{r.label}</button>
-                          : r.label}
+                          : report.mode === 'byDay' ? shortDay(r.key) : r.label}
                       </td>
-                      {report.methods.map(m => {
+                      {visibleMethods.map(m => {
                         // ★ cwm-dailyv2-20261007 ④ + cwm-dailyv3-20261010 §5b：有數嘅格右上角細 checkbox（① 單日 / ③ 逐日；cellTick 內部判斷）
                         const t = cellTick(r, m)
                         return (
@@ -559,6 +706,7 @@ export default function DailyRevenuePage() {
                       <td style={td(isClinicRow(r) ? GRAY : '#000', { fontWeight: isClinicRow(r) ? 400 : 700 })}>{isClinicRow(r) ? '—' : <>{money(r.doctorRaw)}{rowTickNote(r, 'doctor')}</>}</td>
                       <td style={td(BLUE, { textAlign: 'center' })}>{r.spCount || ''}</td>
                       {cellMode === 'byDay' && dayCheckCell(r)}
+                      {reviewMode && reviewCell(r)}
                     </tr>
                     {/* ★ cwm-dailyv3-20261010 §5b：撳【核對】→ 嗰行下面插 InlineDayCheck（核對 MM-DD 全店：$x） */}
                     {cellMode === 'byDay' && inlineCheckDate === r.key && (() => {
@@ -566,7 +714,7 @@ export default function DailyRevenuePage() {
                       if (!dc) return null
                       return (
                         <tr>
-                          <td colSpan={report.methods.length + 5} style={{ padding: 12, background: '#f9fafb', border: '1px solid #d9dee4' }}>
+                          <td colSpan={visibleMethods.length + 4 + extraCols} style={{ padding: 12, background: '#f9fafb', border: '1px solid #d9dee4' }}>
                             <InlineDayCheck
                               clinicId={activeClinicId}
                               clinicLabel={clinics.find(c => c.id === activeClinicId)?.shortName || clinics.find(c => c.id === activeClinicId)?.name || ''}
@@ -584,35 +732,43 @@ export default function DailyRevenuePage() {
                   </Fragment>
                 ))}
                 <tr>
-                  <td style={td('#000', { textAlign: 'left', fontWeight: 700 })}>Total</td>
-                  {report.methods.map(m => (
+                  <td style={td('#000', { textAlign: 'left', fontWeight: 700, ...stickyFirst('#fff') })}>Total</td>
+                  {visibleMethods.map(m => (
                     <td key={m.key} style={td(m.storeIncome || m.doctorIncome ? '#000' : GRAY, { fontWeight: 700 })}>{money(report.totals.byMethod[m.key])}</td>
                   ))}
-                  <td style={td('#000', { fontWeight: 700, background: '#ffff00' })}>{money(report.totals.storeTotal) || '$0.00'}</td>
-                  <td style={td('#000', { fontWeight: 700, background: '#dbeafe' })}>{money(report.totals.doctorRaw) || '$0.00'}</td>
+                  <td style={td('#000', { fontWeight: 700, background: '#ffff00' })}>{money(report.totals.storeTotal) || '0.00'}</td>
+                  <td style={td('#000', { fontWeight: 700, background: '#dbeafe' })}>{money(report.totals.doctorRaw) || '0.00'}</td>
                   <td style={td('#000', { fontWeight: 700, textAlign: 'center' })}>{report.totals.spCount}</td>
                   {cellMode === 'byDay' && <td style={td('#000', { fontWeight: 700 })}>{''}</td>}
+                  {reviewMode && (
+                    <td style={td(reviewProg && reviewProg.total > 0 && reviewProg.ok === reviewProg.total ? '#15803d' : '#b45309', { fontWeight: 700, textAlign: 'center', fontSize: 11.5 })}
+                      title={reviewProg && reviewProg.changed ? `${reviewProg.changed} 日核對後有變` : undefined}>
+                      {reviewProg && reviewProg.total > 0 ? `${reviewProg.ok}/${reviewProg.total}${reviewProg.ok === reviewProg.total ? ' ✓' : ''}` : ''}
+                    </td>
+                  )}
                 </tr>
                 {/* ★ cwm-dailyv2-20261007 ⑤：手續費＋已扣手續費（淨額）—— 同 B 區同一口徑（totals 帶好） */}
                 <tr>
-                  <td style={td(GRAY, { textAlign: 'left', fontStyle: 'italic' })}>手續費</td>
-                  {report.methods.map(m => (
+                  <td style={td(GRAY, { textAlign: 'left', fontStyle: 'italic', ...stickyFirst('#fff') })}>手續費</td>
+                  {visibleMethods.map(m => (
                     <td key={m.key} style={td(GRAY)}>{money(Math.round(((report.totals.byMethod[m.key] ?? 0) - (report.totals.byMethodNet[m.key] ?? 0)) * 100) / 100)}</td>
                   ))}
                   <td style={td(GRAY)}>{money(Math.round((report.totals.storeTotal - report.totals.storeNet) * 100) / 100)}</td>
                   <td style={td(GRAY)}>{money(Math.round((report.totals.doctorRaw - report.totals.doctorNet) * 100) / 100)}</td>
                   <td style={td(GRAY)}>{''}</td>
                   {cellMode === 'byDay' && <td style={td(GRAY)}>{''}</td>}
+                  {reviewMode && <td style={td(GRAY)}>{''}</td>}
                 </tr>
                 <tr>
-                  <td style={td('#000', { textAlign: 'left', fontWeight: 700 })}>已扣手續費（淨額）</td>
-                  {report.methods.map(m => (
+                  <td style={td('#000', { textAlign: 'left', fontWeight: 700, ...stickyFirst('#fff') })}>已扣手續費（淨額）</td>
+                  {visibleMethods.map(m => (
                     <td key={m.key} style={td(m.storeIncome || m.doctorIncome ? '#000' : GRAY, { fontWeight: 700 })}>{money(report.totals.byMethodNet[m.key])}</td>
                   ))}
-                  <td style={td('#000', { fontWeight: 700, background: '#ffff00' })}>{money(report.totals.storeNet) || '$0.00'}</td>
-                  <td style={td('#000', { fontWeight: 700, background: '#dbeafe' })}>{money(report.totals.doctorNet) || '$0.00'}</td>
+                  <td style={td('#000', { fontWeight: 700, background: '#ffff00' })}>{money(report.totals.storeNet) || '0.00'}</td>
+                  <td style={td('#000', { fontWeight: 700, background: '#dbeafe' })}>{money(report.totals.doctorNet) || '0.00'}</td>
                   <td style={td(GRAY)}>{''}</td>
                   {cellMode === 'byDay' && <td style={td(GRAY)}>{''}</td>}
+                  {reviewMode && <td style={td(GRAY)}>{''}</td>}
                 </tr>
               </tbody>
             </table>
@@ -649,7 +805,7 @@ export default function DailyRevenuePage() {
                   <td style={td('#000', { fontWeight: 700 })}>{money(report.totals.doctorRaw)}</td>
                   <td style={td('#000', { fontWeight: 700 })}>{money(Math.round((report.totals.doctorRaw - report.totals.doctorNet) * 100) / 100)}</td>
                   <td style={td('#000', { fontWeight: 700 })}>{money(report.totals.doctorNet)}</td>
-                  <td style={td('#000', { fontWeight: 700, background: '#ffff00' })}>{money(report.totals.share) || '$0.00'}</td>
+                  <td style={td('#000', { fontWeight: 700, background: '#ffff00' })}>{money(report.totals.share) || '0.00'}</td>
                 </tr>
               </tbody>
             </table>

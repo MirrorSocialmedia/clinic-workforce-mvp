@@ -560,6 +560,8 @@ export async function lockPayoutRun(
   payout: PayoutResult,
   createdBy: string,
   clinicId: string,
+  /** ★ cwm-dailyreview2-20261014：同一個 transaction 一齊寫嘅額外審計（例如「未核對晒照樣生成」留名） */
+  extraAudit?: { action: string; notes: string; afterJson?: string },
 ): Promise<any> {
   return await basePrisma.$transaction(async (tx: any) => {
     // ★ cwm-payaudit-20261006：期間鎖（同成本／SP／轉介／調整寫入一前一後，見 period-lock.ts）
@@ -702,6 +704,11 @@ export async function lockPayoutRun(
         }),
       },
     })
+    if (extraAudit) {
+      await tx.auditLog.create({
+        data: { actorId: createdBy, action: extraAudit.action, entity: 'PayoutRun', entityId: run.id, clinicId, notes: extraAudit.notes, afterJson: extraAudit.afterJson ?? null },
+      })
+    }
 
     return run
   })

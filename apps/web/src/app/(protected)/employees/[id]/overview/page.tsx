@@ -10,6 +10,7 @@ import ResignSettlementModal from '@/components/ResignSettlementModal'
 import { hasPermission } from '@/lib/permissions'
 import { zeroEntitledHint } from '@/lib/leave-types'
 import { TIMEBANK_MINUTES_PER_DAY } from '@/lib/timebank-constants'
+import { describeTimebankAudit, fmtMinutesSigned } from '@/lib/timebank-audit-text' // ★ cwm-empoverview-20261014
 
 const api = (url: string, init?: RequestInit) =>
   fetch(url, { credentials: 'include', cache: 'no-store', ...init })
@@ -422,28 +423,7 @@ export default function EmployeeOverviewPage() {
             {history.leaves.length === 0 ? (
               <div style={{ color: '#888', fontSize: 13 }}>無假期記錄</div>
             ) : (
-              <table style={{ width: '100%', fontSize: 12 }}>
-                <thead>
-                  <tr>
-                    <th style={{ textAlign: 'left', padding: '4px 6px' }}>類型</th>
-                    <th style={{ textAlign: 'left', padding: '4px 6px' }}>開始</th>
-                    <th style={{ textAlign: 'left', padding: '4px 6px' }}>結束</th>
-                    <th style={{ textAlign: 'right', padding: '4px 6px' }}>天數</th>
-                    <th style={{ textAlign: 'left', padding: '4px 6px' }}>狀態</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {history.leaves.map((l: any, i: number) => (
-                    <tr key={i} style={{ borderBottom: '1px solid #f0f0f0' }}>
-                      <td style={{ padding: '4px 6px' }}>{l.leaveType}</td>
-                      <td style={{ padding: '4px 6px' }}>{l.startDate}</td>
-                      <td style={{ padding: '4px 6px' }}>{l.endDate}</td>
-                      <td style={{ padding: '4px 6px', textAlign: 'right' }}>{l.days}</td>
-                      <td style={{ padding: '4px 6px' }}>{l.status}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              <LeavesByMonth leaves={history.leaves} />
             )}
           </OverviewSection>
 
@@ -456,6 +436,7 @@ export default function EmployeeOverviewPage() {
                 <thead>
                   <tr>
                     <th style={{ textAlign: 'left', padding: '4px 6px' }}>月份</th>
+                    <th style={{ textAlign: 'left', padding: '4px 6px' }}>來源</th>
                     <th style={{ textAlign: 'right', padding: '4px 6px' }}>工資總額</th>
                     <th style={{ textAlign: 'right', padding: '4px 6px' }}>剔除日數</th>
                     <th style={{ textAlign: 'right', padding: '4px 6px' }}>剔除款額</th>
@@ -463,8 +444,16 @@ export default function EmployeeOverviewPage() {
                 </thead>
                 <tbody>
                   {history.wageHistory.map((w: any, i: number) => (
-                    <tr key={i} style={{ borderBottom: '1px solid #f0f0f0' }}>
+                    <tr key={i} style={{ borderBottom: '1px solid #f0f0f0', color: w.source === 'DRAFT' ? '#9ca3af' : undefined }}>
                       <td style={{ padding: '4px 6px' }}>{w.periodMonth}</td>
+                      {/* ★ cwm-empoverview-20261014：已確認計糧（ADW 用）／歷史工資（匯入）／計糧草稿（唔計 ADW） */}
+                      <td style={{ padding: '4px 6px' }}>
+                        {w.source === 'PAYROLL'
+                          ? <span style={{ background: '#dcfce7', color: '#166534', borderRadius: 99, padding: '0 8px', fontSize: 11 }}>已確認計糧</span>
+                          : w.source === 'DRAFT'
+                            ? '計糧草稿（未確認・唔計 ADW）'
+                            : <span style={{ background: '#f1f5f9', color: '#475569', borderRadius: 99, padding: '0 8px', fontSize: 11 }}>歷史工資（匯入）</span>}
+                      </td>
                       <td style={{ padding: '4px 6px', textAlign: 'right', fontFamily: 'monospace' }}>{fmtCurrency(w.totalWage)}</td>
                       <td style={{ padding: '4px 6px', textAlign: 'right' }}>{w.excludedDays}d</td>
                       <td style={{ padding: '4px 6px', textAlign: 'right', fontFamily: 'monospace' }}>{fmtCurrency(w.excludedWage)}</td>
@@ -542,28 +531,6 @@ function monthBuckets(m: any) {
 
 function signMin(n: number): string {
   return n > 0 ? `+${n}` : `${n}`
-}
-
-/** beforeJson/afterJson（{"balanceMinutes": N}）→ 顯示餘額；parse 唔到顯示原文 */
-function fmtBalanceMin(json: string | null | undefined): string {
-  if (json == null || json === '') return '—'
-  try {
-    const o = JSON.parse(json)
-    if (o && typeof o.balanceMinutes === 'number') return `${o.balanceMinutes} 分`
-  } catch { /* parse 唔到 → 原文 */ }
-  return String(json)
-}
-
-/** notes（JSON string）→ 「k: v；k: v」；parse 唔到顯示原文 */
-function fmtAuditNotes(notes: string | null | undefined): string {
-  if (notes == null || notes === '') return '—'
-  try {
-    const o = JSON.parse(notes)
-    if (o && typeof o === 'object' && !Array.isArray(o)) {
-      return Object.entries(o).map(([k, v]) => `${k}: ${v}`).join('；')
-    }
-  } catch { /* parse 唔到 → 原文 */ }
-  return String(notes)
 }
 
 /** ② 逐筆 running balance：（期初）→ 逐行累計 →（期末）✓/✗ */
@@ -712,23 +679,27 @@ function TimeBankLedgerSection({
           <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
             <thead>
               <tr style={{ background: '#f8f9fa' }}>
-                {['時間', '操作人', '動作', '餘額變化', '備註'].map(h => (
-                  <th key={h} style={{ textAlign: 'left', padding: '4px 6px' }}>{h}</th>
+                {/* ★ cwm-empoverview-20261014：人話 —— 唔再出代號／JSON／誤導嘅「餘額」（見 lib/timebank-audit-text.ts） */}
+                {['時間', '邊個做', '做咗乜', '時間帳戶', '詳情'].map(h => (
+                  <th key={h} style={{ textAlign: h === '時間帳戶' ? 'right' : 'left', padding: '4px 6px' }}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {(ledger.audit ?? []).map((a: any) => (
-                <tr key={a.id} style={{ borderBottom: '1px solid #f0f0f0' }}>
-                  <td style={{ padding: '4px 6px', whiteSpace: 'nowrap' }}>{fmtDateTime(a.createdAt)}</td>
-                  <td style={{ padding: '4px 6px' }}>{a.actorName ?? a.actorId ?? '系統'}</td>
-                  <td style={{ padding: '4px 6px' }}>{a.action}</td>
-                  <td style={{ padding: '4px 6px', fontFamily: 'monospace', whiteSpace: 'nowrap' }}>
-                    {fmtBalanceMin(a.beforeJson)} → {fmtBalanceMin(a.afterJson)}
-                  </td>
-                  <td style={{ padding: '4px 6px' }}>{fmtAuditNotes(a.notes)}</td>
-                </tr>
-              ))}
+              {(ledger.audit ?? []).map((a: any) => {
+                const t = describeTimebankAudit(a)
+                return (
+                  <tr key={a.id} style={{ borderBottom: '1px solid #f0f0f0', verticalAlign: 'top' }}>
+                    <td style={{ padding: '4px 6px', whiteSpace: 'nowrap' }}>{fmtDateTime(a.createdAt)}</td>
+                    <td style={{ padding: '4px 6px', whiteSpace: 'nowrap' }}>{a.actorName ?? '系統'}</td>
+                    <td style={{ padding: '4px 6px', whiteSpace: 'nowrap' }}>{t.title}</td>
+                    <td style={{ padding: '4px 6px', textAlign: 'right', whiteSpace: 'nowrap', fontWeight: 600, color: t.delta == null ? '#888' : t.delta < 0 ? '#dc3545' : t.delta > 0 ? '#198754' : undefined }}>
+                      {t.delta == null ? '—' : fmtMinutesSigned(t.delta)}
+                    </td>
+                    <td style={{ padding: '4px 6px', wordBreak: 'break-word' }}>{t.detail || '—'}</td>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
         )}
@@ -744,6 +715,76 @@ function TimeBankLedgerSection({
           {loadingMore ? '載入中…' : '載入更多（+6 個月）'}
         </button>
       )}
+    </div>
+  )
+}
+
+// ★ cwm-empoverview-20261014：假期記錄按月摺疊（開始日嗰個月；預設只開最新一個月）
+const LEAVE_STATUS: Record<string, { text: string; color: string }> = {
+  APPROVED: { text: '已批', color: '#15803d' },
+  PENDING: { text: '待批', color: '#b45309' },
+  REJECTED: { text: '已拒絕', color: '#b91c1c' },
+  CANCELLED: { text: '已取消', color: '#6b7280' },
+}
+function LeavesByMonth({ leaves }: { leaves: any[] }) {
+  const groups = new Map<string, any[]>()
+  for (const l of leaves) {
+    const m = String(l.startDate).slice(0, 7)
+    groups.set(m, [...(groups.get(m) ?? []), l])
+  }
+  const months = [...groups.keys()].sort().reverse()
+  const [open, setOpen] = useState<Set<string>>(() => new Set(months.slice(0, 1)))
+  const toggle = (m: string) => setOpen(prev => { const n = new Set(prev); n.has(m) ? n.delete(m) : n.add(m); return n })
+  const fmtDays = (d: number) => Number.isInteger(d) ? String(d) : d.toFixed(1)
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      {months.map(m => {
+        const rows = [...groups.get(m)!].sort((a, b) => String(b.startDate).localeCompare(String(a.startDate)))
+        const byType = new Map<string, number>()
+        for (const l of rows) if (l.status === 'APPROVED') byType.set(l.leaveType, (byType.get(l.leaveType) ?? 0) + Number(l.days || 0))
+        const pending = rows.filter(l => l.status === 'PENDING').length
+        const isOpen = open.has(m)
+        return (
+          <div key={m} style={{ border: '1px solid #e5e7eb', borderRadius: 8, overflow: 'hidden' }}>
+            <button type="button" onClick={() => toggle(m)} aria-expanded={isOpen}
+              style={{ width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 10px', background: '#f8fafc', border: 0, cursor: 'pointer', fontSize: 13, textAlign: 'left' }}>
+              <span>
+                {isOpen ? '▾' : '▸'} <b>{m}</b>
+                <span style={{ marginLeft: 10, color: '#374151' }}>
+                  {[...byType.entries()].map(([t, d]) => `${t} ${fmtDays(d)} 日`).join(' · ') || '冇已批假期'}
+                </span>
+                {pending > 0 && <span style={{ marginLeft: 8, color: '#b45309' }}>· {pending} 張待批</span>}
+              </span>
+              <span style={{ color: '#888', fontSize: 12 }}>{rows.length} 筆</span>
+            </button>
+            {isOpen && (
+              <table style={{ width: '100%', fontSize: 12 }}>
+                <thead>
+                  <tr>
+                    <th style={{ textAlign: 'left', padding: '4px 10px' }}>類型</th>
+                    <th style={{ textAlign: 'left', padding: '4px 6px' }}>日期</th>
+                    <th style={{ textAlign: 'right', padding: '4px 6px' }}>天數</th>
+                    <th style={{ textAlign: 'left', padding: '4px 6px' }}>狀態</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((l: any, i: number) => {
+                    const st = LEAVE_STATUS[l.status] ?? { text: l.status, color: '#374151' }
+                    return (
+                      <tr key={l.id ?? i} style={{ borderTop: '1px solid #f0f0f0' }}>
+                        <td style={{ padding: '4px 10px' }}>{l.leaveType}</td>
+                        <td style={{ padding: '4px 6px' }}>{l.startDate === l.endDate ? l.startDate : `${l.startDate} 至 ${l.endDate}`}</td>
+                        <td style={{ padding: '4px 6px', textAlign: 'right' }}>{fmtDays(Number(l.days || 0))}</td>
+                        <td style={{ padding: '4px 6px', color: st.color }}>{st.text}</td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            )}
+          </div>
+        )
+      })}
     </div>
   )
 }

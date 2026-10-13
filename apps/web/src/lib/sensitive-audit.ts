@@ -142,6 +142,9 @@ export const SENSITIVE_AUDIT_SPEC: Array<{ action: string; entity?: string; labe
   { action: 'DAILY_REVENUE_CHECK_REVOKE', label: '取消每日大數核對' },
   { action: 'DAILY_CELL_CHECK', label: '每日大數逐格核對（醫生×付款方式）' }, // ★ cwm-dailyv2-20261007 ④
   { action: 'DAILY_CELL_UNCHECK', label: '取消每日大數逐格核對' }, // ★ cwm-dailyv2-20261007 ④
+  { action: 'DAILY_DOCTOR_REVIEW', label: '每日大數覆核（核對同事）' }, // ★ cwm-dailyreview2-20261014
+  { action: 'DAILY_DOCTOR_REVIEW_REVOKE', label: '取消每日大數覆核' },
+  { action: 'PAYOUT_DOCTOR_REVIEW_ACK', label: '⚠️ 月結：每日收款未覆核晒照樣生成' },
   { action: 'PAYOUT_ADJUST_CREATE', label: '新增調整記錄' },
   { action: 'PAYOUT_ADJUST_UPDATE', label: '修改調整記錄' }, // ★ cwm-adjedit-20261013
   { action: 'PAYOUT_ADJUST_DELETE', label: '⚠️ 刪除調整記錄' },

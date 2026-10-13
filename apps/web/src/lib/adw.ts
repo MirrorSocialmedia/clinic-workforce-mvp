@@ -118,7 +118,8 @@ export async function calculateADW(
     db.payrollItem.findMany({
       where: {
         employeeId,
-        run: { periodMonth: { gte: runFrom, lt: runTo } }, // ★ Date vs Date
+        // ★ cwm-empoverview-20261014（老闆拍板）：只用已確認（FINALIZED／EXPORTED）計糧 —— 草稿數字未定，唔計入 ADW
+        run: { periodMonth: { gte: runFrom, lt: runTo }, status: { in: ADW_RUN_STATUSES } }, // ★ Date vs Date
       },
       include: { run: { select: { periodMonth: true } } },
     }),
@@ -151,7 +152,7 @@ export async function calculateADW(
       source: 'PayrollItem',
       // ★ `??` 唔接 0 → 歷史資料（eoWage 全 0）會直接當 0 工資，令 ADW 被拉低。
       //   改用 `||` 讓 deriveEoWage() 兜返歷史單，等 backfill 做完先可以改返 `??`
-      wage: (pi as any).eoWage || deriveEoWage(pi as any),
+      wage: payrollItemEoWage(pi),
       excludedDays: (pi as any).excludedDays ?? 0,
       excludedWage: (pi as any).excludedWage ?? 0,
       calendarDays: daysInMonth(pmStr),
@@ -208,7 +209,7 @@ export async function calculateADW(
  *   minus deductions.
  *   Excludes: misc reimbursement (not wages), employer MPF contributions.
  */
-function deriveEoWage(pi: any): number {
+export function deriveEoWage(pi: any): number {
   const attendanceBonus = (() => {
     try {
       const detail = pi.detailJson ? JSON.parse(pi.detailJson) : {}
@@ -228,8 +229,72 @@ function deriveEoWage(pi: any): number {
   )
 }
 
+/** ★ cwm-empoverview-20261014：計糧行嘅 EO 工資（ADW 同員工總覽「工資歷史」共用，唔好兩邊各自計） */
+export function payrollItemEoWage(pi: any): number {
+  // ★ `??` 唔接 0 → 歷史資料（eoWage 全 0）會直接當 0 工資；用 `||` 讓 deriveEoWage() 兜返歷史單
+  return pi.eoWage || deriveEoWage(pi)
+}
+
+/** ★ cwm-empoverview-20261014：ADW 只用呢啲狀態嘅計糧（草稿唔計） */
+export const ADW_RUN_STATUSES: Array<'FINALIZED' | 'EXPORTED'> = ['FINALIZED', 'EXPORTED']
+
+export interface WageHistoryRow {
+  periodMonth: string
+  /** PAYROLL = 已確認計糧（ADW 用）；HISTORY = 歷史工資（匯入／補錄）；DRAFT = 計糧草稿（唔計 ADW） */
+  source: 'PAYROLL' | 'HISTORY' | 'DRAFT'
+  totalWage: number
+  excludedDays: number
+  excludedWage: number
+  calendarDays: number
+}
+
+/** 純函數：同一個月優先次序 已確認計糧 ＞ 歷史工資 ＞ 草稿（同 calculateADW 一致：計糧蓋過歷史工資，草稿唔計） */
+export function mergeWageHistory(
+  manual: Array<{ periodMonth: string; totalWage: number; excludedDays: number; excludedWage: number; calendarDays: number }>,
+  items: Array<{ periodMonth: string; status: string; wage: number; excludedDays: number; excludedWage: number }>,
+  fromMonth: string, toMonth: string,
+): WageHistoryRow[] {
+  const rank = { PAYROLL: 3, HISTORY: 2, DRAFT: 1 } as const
+  const by = new Map<string, WageHistoryRow>()
+  const put = (r: WageHistoryRow) => {
+    if (r.periodMonth < fromMonth || r.periodMonth > toMonth) return
+    const cur = by.get(r.periodMonth)
+    if (!cur || rank[r.source] > rank[cur.source]) by.set(r.periodMonth, r)
+  }
+  for (const w of manual) put({ periodMonth: w.periodMonth, source: 'HISTORY', totalWage: w.totalWage, excludedDays: w.excludedDays, excludedWage: w.excludedWage, calendarDays: w.calendarDays })
+  for (const it of items) put({
+    periodMonth: it.periodMonth,
+    source: (ADW_RUN_STATUSES as string[]).includes(it.status) ? 'PAYROLL' : 'DRAFT',
+    totalWage: Math.round(it.wage * 100) / 100,
+    excludedDays: it.excludedDays, excludedWage: it.excludedWage, calendarDays: daysInMonth(it.periodMonth),
+  })
+  return [...by.values()].sort((a, b) => b.periodMonth.localeCompare(a.periodMonth))
+}
+
+/** ★ cwm-empoverview-20261014：員工總覽「工資歷史（ADW 來源）」—— 歷史工資＋系統計糧（以前淨係讀歷史工資） */
+export async function wageHistoryRows(db: any, employeeId: string, fromMonth: string, toMonth: string): Promise<WageHistoryRow[]> {
+  const [manual, items] = await Promise.all([
+    db.wageHistory.findMany({ where: { employeeId, periodMonth: { gte: fromMonth, lte: toMonth } } }),
+    db.payrollItem.findMany({
+      where: {
+        employeeId,
+        run: { periodMonth: { gte: new Date(`${fromMonth}-01T00:00:00+08:00`), lt: new Date(new Date(`${toMonth}-01T00:00:00+08:00`).getTime() + 32 * 86400000) } },
+      },
+      select: {
+        eoWage: true, excludedDays: true, excludedWage: true, detailJson: true,
+        basePay: true, otPay: true, splitPay: true, storeBonus: true, deduction: true,
+        run: { select: { periodMonth: true, status: true } },
+      },
+    }),
+  ])
+  return mergeWageHistory(manual, items.map((it: any) => ({
+    periodMonth: periodMonthKey(it.run.periodMonth), status: it.run.status, wage: payrollItemEoWage(it),
+    excludedDays: it.excludedDays ?? 0, excludedWage: it.excludedWage ?? 0,
+  })), fromMonth, toMonth)
+}
+
 /** Days in a month from YYYY-MM string */
-function daysInMonth(periodMonth: string): number {
+export function daysInMonth(periodMonth: string): number {
   const [y, m] = periodMonth.split('-').map(Number)
   return new Date(Date.UTC(y, m, 0)).getUTCDate()
 }

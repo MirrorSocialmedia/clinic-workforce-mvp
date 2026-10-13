@@ -6,8 +6,11 @@ import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { runGates, computePayout } from '@/lib/payout/engine'
 import { costDetail, totalReminders } from '@/lib/payout/cost-detail'
 import { todayHK } from '@/lib/hk-date'
+import { prisma } from '@/lib/prisma'
 import { spReview, spReviewNeeded } from '@/lib/payout/sp-review'
 import { dailyReview } from '@/lib/payout/daily-review'
+import { doctorReviewProgress } from '@/lib/payout/daily-doctor-review'
+import { annotateCostChecks } from '@/lib/payout/cost-check-status'
 import { payoutClinicGuard } from '@/lib/payout/kiosk-scope'
 
 export async function POST(req: NextRequest) {
@@ -41,6 +44,9 @@ export async function POST(req: NextRequest) {
 
   // ★ cwm-costdetail-20261006：成本明細（已計入／當月未計入提醒）—— 鎖定前要剔「我已檢查」
   const detail = await costDetail(providerId, clinicId, periodMonth, todayHK())
+  // ★ cwm-paycostcheck-20261014：已計入成本逐筆「有冇經月結單／invoice 核對」（同成本錄入一樣綠）—— 只係標示，失敗唔阻預覽
+  const costCheck = await annotateCostChecks(prisma, detail, providerId, clinicId, periodMonth)
+    .catch(e => { console.error('[preview] annotateCostChecks failed', e); return null })
   const extra: string[] = []
   if (Math.abs(detail.LAB.countedTotal - payout.labCost) > 0.005) {
     extra.push(`Lab 明細合計（${detail.LAB.countedTotal}）同月結（${payout.labCost}）唔一致，請通知管理員`)
@@ -59,8 +65,11 @@ export async function POST(req: NextRequest) {
     preview: payout,
     costDetail: detail,
     costReminders: totalReminders(detail),
+    costCheck,
     spReview: { ...sp, needsAck: spReviewNeeded(sp) },
     dailyReview: daily,
+    // ★ cwm-dailyreview2-20261014：核對同事逐日覆核進度（未核對晒要剔「我知道」先生成）
+    doctorCheck: await doctorReviewProgress(providerId, clinicId, periodMonth),
     warnings: [...warnings, ...payout.warnings, ...extra],
   })
 }

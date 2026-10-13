@@ -35,6 +35,11 @@ interface PayoutRun {
   provider: { name: string; shortName?: string | null }
   clinic?: { name: string; shortName?: string | null } | null
   adjustments: any[]
+  // ★ cwm-dailyreview2-20261014：每日收款核對同事
+  doctorReview?: {
+    ack: { actorName: string; at: string; notes: string } | null
+    now: { total: number; ok: number; changed: number; pendingDates: string[]; changedDates: string[] } | null
+  }
 }
 
 // ★ 2026-08-26：工廠總覽 API 回傳行型
@@ -377,6 +382,26 @@ export default function PayoutRunDetailPage({ params }: { params: { id: string }
           <div className="flex justify-between text-blue-600"><span>拆帳 ({run.percentUsed}%)</span><span>${run.salaryAmount.toFixed(2)}</span></div>
         </div>
       </Card>
+
+      {/* ★ cwm-dailyreview2-20261014：每日收款核對同事（生成時照樣生成嘅留名＋而家進度） */}
+      {run.doctorReview && (run.doctorReview.ack || (run.doctorReview.now && run.doctorReview.now.total > 0)) && (
+        <Card className={`p-4 mb-4 text-sm ${run.doctorReview.ack ? 'border-amber-300 bg-amber-50' : ''}`}>
+          <h2 className="font-semibold mb-2">每日收款（核對同事）</h2>
+          {run.doctorReview.ack && (
+            <div className="text-amber-900">
+              ⚠️ {run.doctorReview.ack.notes}<br />
+              <span className="text-xs">確認照樣生成：<b>{run.doctorReview.ack.actorName}</b> · {new Date(run.doctorReview.ack.at).toLocaleString('zh-HK', { timeZone: 'Asia/Hong_Kong', hour12: false })}</span>
+            </div>
+          )}
+          {run.doctorReview.now && run.doctorReview.now.total > 0 && (
+            <div className={`mt-1 ${run.doctorReview.now.ok === run.doctorReview.now.total ? 'text-green-700' : 'text-amber-800'}`}>
+              而家：{run.doctorReview.now.ok}/{run.doctorReview.now.total} 日已核對{run.doctorReview.now.ok === run.doctorReview.now.total ? ' ✓' : ''}
+              {run.doctorReview.now.pendingDates.length > 0 && `（未核對：${run.doctorReview.now.pendingDates.map(d => d.slice(5)).join('、')}）`}
+              {run.doctorReview.now.changedDates.length > 0 && `（有變：${run.doctorReview.now.changedDates.map(d => d.slice(5)).join('、')}）`}
+            </div>
+          )}
+        </Card>
+      )}
 
       <Card className="p-4 mb-4">
         <h2 className="font-semibold mb-3">補貼與調整</h2>

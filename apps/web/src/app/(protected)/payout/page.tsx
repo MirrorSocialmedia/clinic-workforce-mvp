@@ -92,6 +92,9 @@ function PayoutRunsPageInner() {
   const [spAck, setSpAck] = useState(false)
   // ★ cwm-dailyreview-20261006：每日收款有未核對／有變 → 要剔「我知道」
   const [dailyAck, setDailyAck] = useState(false)
+  // ★ cwm-dailyreview2-20261014：核對同事未核對晒 → 要剔「我知道」（伺服器記低係邊個）
+  const [doctorAck, setDoctorAck] = useState(false)
+  const [myName, setMyName] = useState('')
   const [previewWarnings, setPreviewWarnings] = useState<string[]>([])
 
   // 「有收入但未生成」提示
@@ -171,6 +174,7 @@ function PayoutRunsPageInner() {
     try {
       const res = await apiFetch<any>('/api/me')
       setUserRole(res.user?.role || '')
+      setMyName(res.user?.name || '')
       setGrant(res.user?.grant || [])
       setDeny(res.user?.deny || [])
     } catch (e) {
@@ -324,6 +328,7 @@ function PayoutRunsPageInner() {
       setCostAck(false)
       setSpAck(false)
       setDailyAck(false)
+      setDoctorAck(false)
       setShowPreview(true)
     } catch (e: any) {
       if (e.status === 400) {
@@ -337,7 +342,7 @@ function PayoutRunsPageInner() {
     }
   }
 
-  async function handleGenerate(costReviewAck = false, spReviewAck = false, dailyReviewAck = false) {
+  async function handleGenerate(costReviewAck = false, spReviewAck = false, dailyReviewAck = false, doctorReviewAck = false) {
     if (!selectedProvider || !selectedMonth || !selectedClinic) {
       alert('請選擇醫生、診所和月份')
       return
@@ -355,6 +360,7 @@ function PayoutRunsPageInner() {
           costReviewAck,
           spReviewAck,
           dailyReviewAck,
+          doctorReviewAck,
         }),
       })
       alert(`月結單已生成 (總額: $${res.run.totalAmount})`)
@@ -369,7 +375,7 @@ function PayoutRunsPageInner() {
         loadAvailableClinics(selectedProvider, selectedMonth)
       }
     } catch (e: any) {
-      if (e.status === 409 && (e.body?.code === 'COST_REVIEW_REQUIRED' || e.body?.code === 'SP_REVIEW_REQUIRED' || e.body?.code === 'DAILY_REVIEW_REQUIRED')) {
+      if (e.status === 409 && (e.body?.code === 'COST_REVIEW_REQUIRED' || e.body?.code === 'SP_REVIEW_REQUIRED' || e.body?.code === 'DAILY_REVIEW_REQUIRED' || e.body?.code === 'DOCTOR_REVIEW_REQUIRED')) {
         // ★ cwm-costdetail-20261006：直接撳「生成並鎖定」但有未計入成本 → 開預覽俾人檢查
         alert(e.message)
         handlePreview()
@@ -604,12 +610,28 @@ function PayoutRunsPageInner() {
                   providerLabel={providers.find(p => p.id === selectedProvider)?.name || ''}
                   onRecompute={handlePreview} busy={previewLoading}
                   onChecked={next => setPreviewData((p: any) => (p ? { ...p, dailyReview: next } : p))} />
+                {/* ★ cwm-dailyreview2-20261014：核對同事逐日核對進度 */}
+                {previewData.doctorCheck && previewData.doctorCheck.total > 0 && (
+                  <div className={`flex justify-between text-xs ${previewData.doctorCheck.needsAck ? 'text-amber-800' : 'text-green-700'}`}>
+                    <span>
+                      每日收款（核對同事）：{previewData.doctorCheck.ok}/{previewData.doctorCheck.total} 日已核對
+                      {previewData.doctorCheck.pendingDates.length > 0 && `；未核對 ${previewData.doctorCheck.pendingDates.map((d: string) => d.slice(5)).join('、')}`}
+                      {previewData.doctorCheck.changedDates.length > 0 && `；有變 ${previewData.doctorCheck.changedDates.map((d: string) => d.slice(5)).join('、')}`}
+                    </span>
+                    {previewData.doctorCheck.needsAck && selectedClinic && (
+                      <a className="underline whitespace-nowrap ml-2" target="_blank" rel="noreferrer"
+                        href={`/payout/daily?clinicId=${selectedClinic}&providerId=${selectedProvider}&from=${selectedMonth}-01&to=${selectedMonth}-${String(new Date(Date.UTC(Number(selectedMonth.slice(0, 4)), Number(selectedMonth.slice(5, 7)), 0)).getUTCDate()).padStart(2, '0')}`}>去每日大數</a>
+                    )}
+                  </div>
+                )}
                 <div className="flex justify-between"><span>收入（扣手續費後）</span><span>${previewData.preview.grossAmount?.toFixed(2)}</span></div>
                 {/* ★ cwm-costdetail-20261006：成本可撳開 —— 已計入＋當月未計入提醒 */}
                 <CostDetailRow label="Lab 成本" amount={previewData.preview.labCost ?? 0} detail={previewData.costDetail?.LAB}
-                  providerId={selectedProvider} clinicId={selectedClinic} month={selectedMonth} receivedBased />
+                  providerId={selectedProvider} clinicId={selectedClinic} month={selectedMonth} receivedBased
+                  checkSummary={previewData.costCheck?.summary?.LAB} labMarks={previewData.costCheck?.labMarks} />
                 <CostDetailRow label="植牙成本" amount={previewData.preview.implantCost ?? 0} detail={previewData.costDetail?.IMPLANT}
-                  providerId={selectedProvider} clinicId={selectedClinic} month={selectedMonth} receivedBased={false} />
+                  providerId={selectedProvider} clinicId={selectedClinic} month={selectedMonth} receivedBased={false}
+                  checkSummary={previewData.costCheck?.summary?.IMPLANT} />
                 {/* ★ cwm-invismerge-20261006：隱形矯正已併入 LAB —— 只喺舊資料（已鎖定月份重新預覽）有數先顯示 */}
                 {((previewData.preview.invisalignCost ?? 0) !== 0 || (previewData.costDetail?.INVISALIGN?.counted?.length ?? 0) > 0) && (
                   <CostDetailRow label="Invisalign 成本（舊類別）" amount={previewData.preview.invisalignCost ?? 0} detail={previewData.costDetail?.INVISALIGN}
@@ -655,10 +677,19 @@ function PayoutRunsPageInner() {
                 我知道每日收款仲有 {previewData.dailyReview.counts.unchecked} 日未核對、{previewData.dailyReview.counts.changed} 日核對後有變
               </label>
             )}
+            {previewData.doctorCheck?.needsAck && (
+              <label className="flex items-start gap-2 mt-2 p-3 rounded border border-amber-300 bg-amber-50 text-sm text-amber-900">
+                <input type="checkbox" checked={doctorAck} onChange={e => setDoctorAck(e.target.checked)} className="h-4 w-4 mt-0.5" />
+                <span>
+                  我知道每日收款（核對同事）仲有 {previewData.doctorCheck.pendingDates.length} 日未核對{previewData.doctorCheck.changed ? `、${previewData.doctorCheck.changed} 日核對後有變` : ''}，照樣生成
+                  <span className="block text-xs text-amber-800">會記低：{myName || '你'}（生成時間）—— 月結單詳情、審計日誌睇到</span>
+                </span>
+              </label>
+            )}
             <div className="flex justify-end gap-2 mt-4">
               <Button variant="outline" onClick={() => setShowPreview(false)}>關閉</Button>
-              <Button onClick={() => handleGenerate(costAck, spAck, dailyAck)}
-                disabled={generating || ((previewData.costReminders ?? 0) > 0 && !costAck) || (!!previewData.spReview?.needsAck && !spAck) || (!!previewData.dailyReview?.needsAck && !dailyAck)}>
+              <Button onClick={() => handleGenerate(costAck, spAck, dailyAck, doctorAck)}
+                disabled={generating || ((previewData.costReminders ?? 0) > 0 && !costAck) || (!!previewData.spReview?.needsAck && !spAck) || (!!previewData.dailyReview?.needsAck && !dailyAck) || (!!previewData.doctorCheck?.needsAck && !doctorAck)}>
                 {generating ? '生成中...' : '確認並鎖定'}
               </Button>
             </div>
