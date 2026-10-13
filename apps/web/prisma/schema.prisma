@@ -1433,16 +1433,16 @@ model PaymentAllocation {
 }
 
 model PaymentMethodRule {
-  id            String    @id @default(cuid())
-  method        String
-  label         String
-  feePercent    Decimal   @default(0) @db.Decimal(5, 3)
-  countAsIncome Boolean   @default(true) // 計【店舖營收】
+  id             String    @id @default(cuid())
+  method         String
+  label          String
+  feePercent     Decimal   @default(0) @db.Decimal(5, 3)
+  countAsIncome  Boolean   @default(true) // 計【店舖營收】
   /// ★ cwm-doctorflag-20261011：計【醫生收入】（月結 gross）—— 取代寫死嘅「countAsIncome || FREE_SP」
-  countForDoctor Boolean  @default(true)
-  effectiveFrom DateTime
-  effectiveTo   DateTime?
-  createdBy     String
+  countForDoctor Boolean   @default(true)
+  effectiveFrom  DateTime
+  effectiveTo    DateTime?
+  createdBy      String
 
   @@unique([method, effectiveFrom])
   @@index([method, effectiveFrom])
@@ -2349,12 +2349,32 @@ model LabChequeAmount {
   @@index([periodMonth])
 }
 
+/// ★ cwm-chequemanual-20261013：手動開票（老闆自己輸入抬頭＋金額）
+///   出票診所（必填）決定用邊本支票簿（ChequeAccountClinic）；出票後 Cheque.sourceType = 'MANUAL'、sourceId = id。
+///   未出票（或者張票已作廢）先可以改／刪；刪 = 軟刪除（deletedAt），舊支票紀錄仲搵到用途。
+model ManualCheque {
+  id          String    @id @default(cuid())
+  clinicId    String
+  periodMonth String // 'YYYY-MM'
+  payeeName   String
+  amount      Decimal   @db.Decimal(12, 2)
+  purpose     String
+  createdBy   String
+  updatedBy   String
+  deletedAt   DateTime?
+  deletedBy   String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([periodMonth, clinicId])
+}
+
 /// 已出支票紀錄（號碼一用就記；印壞 = VOID，唔會再用）
 model Cheque {
   id          String    @id @default(cuid())
   accountId   String
   chequeNo    String // 補零字串
-  sourceType  String // PAYROLL_ITEM | PAYOUT_RUN | LAB_AMOUNT
+  sourceType  String // PAYROLL_ITEM | PAYOUT_RUN | LAB_AMOUNT | MANUAL
   sourceId    String
   periodMonth String // 'YYYY-MM'
   clinicId    String?
@@ -2414,12 +2434,12 @@ model DailyRevenueCheck {
 model DailyRevenueCellCheck {
   id          String   @id @default(cuid())
   clinicId    String
-  date        String   // YYYY-MM-DD（香港日）—— 同 DailyRevenueCheck 一樣用字串
-  rowKey      String   // DailyRow.key（providerId 或 'ext:<apricotId>'）
-  colKey      String   // DailyMethod.key（同表頭同一個 colKey）
+  date        String // YYYY-MM-DD（香港日）—— 同 DailyRevenueCheck 一樣用字串
+  rowKey      String // DailyRow.key（providerId 或 'ext:<apricotId>'）
+  colKey      String // DailyMethod.key（同表頭同一個 colKey）
   amount      Decimal  @db.Decimal(12, 2) // tick 嗰陣嘅金額快照
-  checkedBy   String   // 登入帳號 userId
-  checkedName String   // 快照：店舖帳號就寫揀咗嘅護士名，冇揀就寫帳號名
+  checkedBy   String // 登入帳號 userId
+  checkedName String // 快照：店舖帳號就寫揀咗嘅護士名，冇揀就寫帳號名
   checkedAt   DateTime @default(now())
 
   @@unique([clinicId, date, rowKey, colKey])

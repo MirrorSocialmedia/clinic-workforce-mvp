@@ -4,9 +4,11 @@
 // ★ cwm-chequeprint-20261005：支票打印中心（只限老闆；API RBAC = OWNER）
 //   揀月份＋出票戶口 → 員工／醫生／Lab 三個分頁 → 揀 → 逐張打印（每張確認「印得好」或者「作廢重印」）
 //   打印：Chrome WebUSB 直送南天 PR2 Plus（冇 agent）
+//   ★ cwm-chequemanual-20261013：第 4 個分頁「手動」— 老闆自己輸入抬頭＋金額＋用途，出票診所必揀；
+//     打印前手動票要逐張剔核對
 // ============================================================
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { apiFetch } from '@/lib/api-client'
 import { ChequePreview } from '@/components/cheques/ChequePreview'
@@ -16,7 +18,7 @@ import { buildContent, hasNonAscii } from '@/lib/cheque-print/content'
 import { encodeForPrinter, rasterWidthMm } from '@/lib/cheque-print/webusb'
 import { todayHK } from '@/lib/hk-date'
 
-type Tab = 'employees' | 'providers' | 'labs'
+type Tab = 'employees' | 'providers' | 'labs' | 'manuals'
 interface Row {
   sourceType: string; sourceId: string; clinicId: string | null; clinicName: string; payee: string | null
   label: string; detail: string; amount: number; blocker: string | null
@@ -24,17 +26,21 @@ interface Row {
   lab?: { labId: string; statementRef: string | null; note: string | null; systemCost: number }
   /** ★ cwm-chequerec-20261005：醫生未生成月結（灰色佔位，唔計數） */
   missing?: boolean
+  manual?: { payeeName: string; purpose: string; createdByName: string; createdAt: string }
 }
+interface ManualPayee { payeeName: string; lastMonth: string; lastAmount: number }
 interface Issued { id: string; chequeNo: string; sourceType: string; payeeName: string; amount: number; chequeDate: string; status: string; confirmed: boolean; voidReason: string | null }
 interface Layout { id: string; name: string; fields: LayoutFields; offsetXmm: number; offsetYmm: number; printerMode: PrinterMode }
 interface Center {
   account: { id: string; label: string; accountLast4: string | null; nextNoText: string | null; remaining: number | null }
-  layout: Layout; employees: Row[]; providers: Row[]; labs: Row[]; issued: Issued[]
+  layout: Layout; employees: Row[]; providers: Row[]; labs: Row[]; manuals: Row[]; issued: Issued[]
+  clinics: Array<{ id: string; name: string }>; manualPayees: ManualPayee[]
 }
 interface AccountOpt { id: string; label: string; accountLast4: string | null; nextNoText: string | null; isActive: boolean }
 
 const money = (n: number) => n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const rowKey = (r: Row) => `${r.sourceType}:${r.sourceId}`
+const allRows = (d: Center) => [...d.employees, ...d.providers, ...d.labs, ...d.manuals]
 
 function monthOptions(): string[] {
   const t = todayHK()
@@ -68,6 +74,8 @@ export default function ChequeCenterPage() {
   const [picked, setPicked] = useState<Set<string>>(new Set())
   const [err, setErr] = useState<string | null>(null)
   const [session, setSession] = useState<Row[] | null>(null)
+  // 重新載入時保留老闆已經揀／唔揀嘅（只係新出現嘅行預設揀）
+  const seenKeys = useRef<{ scope: string; keys: Set<string> }>({ scope: '', keys: new Set() })
 
   const loadAccounts = useCallback(async () => {
     try {
@@ -85,9 +93,13 @@ export default function ChequeCenterPage() {
     try {
       const d = await apiFetch<Center>(`/api/cheques/center?month=${month}&accountId=${accountId}`)
       setData(d)
-      // 預設揀晒可以出票嘅
-      const all = [...d.employees, ...d.providers, ...d.labs]
-      setPicked(new Set(all.filter(r => !r.blocker && !r.cheque).map(rowKey)))
+      // 預設揀晒可以出票嘅；同一個月份＋戶口重新載入就保留之前揀咗／剔走咗嘅，新行先預設揀
+      const all = allRows(d)
+      const scope = `${month}|${accountId}`
+      const prev = seenKeys.current.scope === scope ? seenKeys.current.keys : null
+      const fresh = all.filter(r => !r.blocker && !r.cheque).map(rowKey)
+      setPicked(p => new Set(fresh.filter(k => !prev || !prev.has(k) || p.has(k))))
+      seenKeys.current = { scope, keys: new Set(fresh) }
     } catch (e: any) { setErr(e?.message || '載入失敗'); setData(null) }
   }, [month, accountId])
   useEffect(() => { load() }, [load])
@@ -96,7 +108,7 @@ export default function ChequeCenterPage() {
   const fitErr = useMemo(() => {
     const m = new Map<string, string | null>()
     if (!data) return m
-    for (const r of [...data.employees, ...data.providers, ...data.labs]) {
+    for (const r of allRows(data)) {
       if (!r.blocker && !r.cheque) m.set(rowKey(r), checkFits(r, data.layout, chequeDate))
     }
     return m
@@ -104,7 +116,7 @@ export default function ChequeCenterPage() {
   const issuable = (r: Row) => !r.blocker && !r.cheque && !fitErr.get(rowKey(r))
   const selected = useMemo(() => {
     if (!data) return []
-    return [...data.employees, ...data.providers, ...data.labs].filter(r => picked.has(rowKey(r)) && issuable(r))
+    return allRows(data).filter(r => picked.has(rowKey(r)) && issuable(r))
   }, [data, picked, fitErr]) // eslint-disable-line react-hooks/exhaustive-deps -- issuable 只靠 fitErr
   const total = selected.reduce((s, r) => s + r.amount, 0)
   const toggle = (r: Row) => setPicked(p => { const n = new Set(p); n.has(rowKey(r)) ? n.delete(rowKey(r)) : n.add(rowKey(r)); return n })
@@ -125,7 +137,17 @@ export default function ChequeCenterPage() {
     } catch (e: any) { setErr(e?.message || '作廢失敗') }
   }
 
-  const tabs: Array<[Tab, string]> = [['employees', '員工'], ['providers', '醫生'], ['labs', 'Lab']]
+  const tabs: Array<[Tab, string]> = [['employees', '員工'], ['providers', '醫生'], ['labs', 'Lab'], ['manuals', '手動']]
+  const [editing, setEditing] = useState<Row | null>(null)
+  const delManual = async (r: Row) => {
+    if (!window.confirm(`刪除呢張手動票？\n\n${r.payee} · HK$${money(r.amount)}\n${r.manual?.purpose ?? ''}`)) return
+    setErr(null)
+    try {
+      await apiFetch(`/api/cheques/manual/${r.sourceId}`, { method: 'DELETE' })
+      if (editing && rowKey(editing) === rowKey(r)) setEditing(null)
+    } catch (e: any) { setErr(e?.message || '刪除失敗') }
+    load()
+  }
 
   return (
     <div className="p-6" style={{ maxWidth: 1280 }}>
@@ -166,6 +188,12 @@ export default function ChequeCenterPage() {
       </div>
       {err && <div className="text-sm text-red-600 mb-3" role="alert">{err}</div>}
 
+      {data && tab === 'manuals' && (
+        <ManualForm key={`${month}|${accountId}|${editing ? rowKey(editing) : 'new'}`} accountId={accountId} month={month} clinics={data.clinics}
+          payees={data.manualPayees} layout={data.layout} chequeDate={chequeDate} editing={editing}
+          onDone={() => { setEditing(null); load() }} onCancel={() => setEditing(null)} />
+      )}
+
       {data && (
         <div className="border rounded-lg bg-white overflow-hidden mb-4">
           <div className="hidden md:grid grid-cols-[40px_1.4fr_1.6fr_1fr_0.9fr_1.4fr] gap-3 px-4 py-2 bg-slate-50 text-xs font-semibold text-slate-600 items-center">
@@ -173,7 +201,11 @@ export default function ChequeCenterPage() {
             <span>收款人（支票抬頭）</span><span>來源</span><span className="text-right">金額</span><span>支票</span><span></span>
           </div>
           {rows.length === 0 && <div className="px-4 py-6 text-sm text-muted-foreground">呢個戶口 {month} 冇要出嘅{tabs.find(t => t[0] === tab)?.[1]}票</div>}
-          {rows.map(r => tab === 'labs'
+          {rows.map(r => tab === 'manuals'
+            ? <ManualRow key={rowKey(r)} r={r} on={picked.has(rowKey(r))} canPick={issuable(r)} fitErr={fitErr.get(rowKey(r)) ?? null}
+                editing={!!editing && rowKey(editing) === rowKey(r)} onToggle={() => toggle(r)}
+                onEdit={() => { setEditing(r); window.scrollTo({ top: 0, behavior: 'smooth' }) }} onDelete={() => delManual(r)} />
+            : tab === 'labs'
             ? <LabRow key={rowKey(r)} r={r} month={month} on={picked.has(rowKey(r))} canPick={issuable(r)} fitErr={fitErr.get(rowKey(r)) ?? null} onToggle={() => toggle(r)} onSaved={load} />
             : (
               <div key={rowKey(r)} className={`grid grid-cols-[40px_1fr] md:grid-cols-[40px_1.4fr_1.6fr_1fr_0.9fr_1.4fr] gap-x-3 gap-y-1 px-4 py-2.5 border-t text-sm items-center ${issuable(r) ? '' : 'bg-slate-50'}`}>
@@ -194,6 +226,7 @@ export default function ChequeCenterPage() {
             已揀 <b>{selected.length}</b> 張 · 合計 <b className="font-mono">HK${money(total)}</b>
             {data.account.nextNoText && <> · 由 <span className="font-mono">#{data.account.nextNoText}</span> 開始</>}
             {data.account.remaining != null && data.account.remaining < selected.length && <span className="text-red-600"> · 支票簿得返 {data.account.remaining} 張</span>}
+            {selected.some(r => r.sourceType === 'MANUAL') && <span className="text-slate-500">（手動 {selected.filter(r => r.sourceType === 'MANUAL').length}）</span>}
           </div>
           <button type="button" disabled={selected.length === 0 || printer.state.kind !== 'ready'} onClick={() => setSession(selected)}
             className="h-11 px-6 rounded-md bg-brand text-white font-semibold disabled:opacity-50">
@@ -270,6 +303,138 @@ function LabRow({ r, month, on, canPick, fitErr, onToggle, onSaved }: {
   )
 }
 
+// ---------- ★ cwm-chequemanual-20261013：手動開票 ----------
+
+function ManualRow({ r, on, canPick, fitErr, editing, onToggle, onEdit, onDelete }: {
+  r: Row; on: boolean; canPick: boolean; fitErr: string | null; editing: boolean
+  onToggle: () => void; onEdit: () => void; onDelete: () => void
+}) {
+  const m = r.manual
+  return (
+    <div className={`grid grid-cols-[40px_1fr] md:grid-cols-[40px_1.4fr_1.6fr_1fr_0.9fr_1.4fr] gap-x-3 gap-y-1 px-4 py-2.5 border-t text-sm items-center ${editing ? 'bg-amber-50' : canPick ? '' : 'bg-slate-50'}`}>
+      <input type="checkbox" checked={on && canPick} disabled={!canPick} onChange={onToggle} aria-label={`揀 ${r.payee}`} />
+      <span><b className="font-medium">{r.payee}</b><br /><span className="text-xs text-slate-500">手動 · {m?.createdByName} {m ? new Date(m.createdAt).toLocaleString('zh-HK', { timeZone: 'Asia/Hong_Kong', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }) : ''} 加入</span></span>
+      <span className="col-start-2 md:col-start-auto text-slate-600">{m?.purpose}<br /><span className="text-xs text-slate-500">{r.clinicName}</span></span>
+      <span className="col-start-2 md:col-start-auto md:text-right font-mono">{money(r.amount)}</span>
+      <span className="col-start-2 md:col-start-auto"><ChequeChip c={r.cheque} /></span>
+      <span className="col-start-2 md:col-start-auto text-xs flex flex-wrap gap-x-3 gap-y-1 items-center">
+        {r.cheque
+          ? <span className="text-amber-700">已出票：要改先作廢張票</span>
+          : <>
+              <button type="button" onClick={onEdit} className="underline text-slate-700">修改</button>
+              <button type="button" onClick={onDelete} className="underline text-red-700">刪除</button>
+              {fitErr && <span className="text-amber-700">{fitErr}</span>}
+            </>}
+      </span>
+    </div>
+  )
+}
+
+function ManualForm({ accountId, month, clinics, payees, layout, chequeDate, editing, onDone, onCancel }: {
+  accountId: string; month: string; clinics: Array<{ id: string; name: string }>; payees: ManualPayee[]
+  layout: Layout; chequeDate: string; editing: Row | null; onDone: () => void; onCancel: () => void
+}) {
+  const [payeeName, setPayeeName] = useState(editing?.manual?.payeeName ?? '')
+  const [amount, setAmount] = useState(editing ? String(editing.amount) : '')
+  const [purpose, setPurpose] = useState(editing?.manual?.purpose ?? '')
+  const [clinicId, setClinicId] = useState(editing?.clinicId ?? (clinics.length === 1 ? clinics[0].id : ''))
+  const [suggestOpen, setSuggestOpen] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [msg, setMsg] = useState<string | null>(null)
+
+  const amt = Number(amount.replace(/,/g, ''))
+  const amountOk = amount.trim() !== '' && Number.isFinite(amt) && amt > 0
+  const preview = useMemo(() => {
+    if (!payeeName.trim() || !amountOk) return null
+    const res = buildContent({ payee: payeeName, amount: amt, date: chequeDate }, layout.fields, layout.printerMode)
+    if (!res.ok) return { ok: false as const, error: res.error }
+    if (hasNonAscii(res.content.payee) && rasterWidthMm(res.content.payee) > layout.fields.payee.width) return { ok: false as const, error: '中文抬頭太長' }
+    return { ok: true as const, words: res.content.words }
+  }, [payeeName, amountOk, amt, chequeDate, layout])
+  const q = payeeName.trim().toUpperCase()
+  const matches = q ? payees.filter(p => p.payeeName.toUpperCase().includes(q) && p.payeeName.toUpperCase() !== q).slice(0, 6) : []
+
+  const submit = async () => {
+    setMsg(null)
+    if (!clinicId) { setMsg('請揀出票診所'); return }
+    if (!purpose.trim()) { setMsg('請輸入用途／備註'); return }
+    if (preview && !preview.ok) { setMsg(`塞唔落支票：${preview.error}`); return }
+    setBusy(true)
+    try {
+      const body = JSON.stringify({ accountId, clinicId, month, payeeName, amount: amount.replace(/,/g, '').trim(), purpose })
+      if (editing) await apiFetch(`/api/cheques/manual/${editing.sourceId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body })
+      else await apiFetch('/api/cheques/manual', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body })
+      // 新增完清空（出票診所保留，方便連續加同一間店）；修改完由 parent 換 key 重新 mount
+      if (!editing) { setPayeeName(''); setAmount(''); setPurpose(''); setMsg('已加入清單 ✓') }
+      setBusy(false)
+      onDone()
+    } catch (e: any) {
+      setMsg(e?.message || '儲存失敗')
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className={`border-2 rounded-lg p-4 mb-4 ${editing ? 'border-amber-400 bg-amber-50/40' : 'border-brand/60 bg-white'}`}>
+      <div className="font-semibold mb-3">{editing ? '✏️ 修改手動票' : '＋ 手動開票'} <span className="text-xs font-normal text-slate-500">· {month}</span></div>
+      {clinics.length === 0 && <div className="text-sm text-amber-800 mb-2">呢本支票簿未揀任何診所，請先去 <Link href="/cheques/settings" className="underline">支票設定</Link>。</div>}
+      <div className="grid md:grid-cols-2 gap-x-4 gap-y-3">
+        <label className="flex flex-col gap-1 text-xs text-slate-600 relative">
+          <span>支票抬頭（收款人）<span className="text-red-600"> *</span></span>
+          <input value={payeeName} onChange={e => { setPayeeName(e.target.value); setSuggestOpen(true); setMsg(null) }} onFocus={() => setSuggestOpen(true)}
+            onBlur={() => setTimeout(() => setSuggestOpen(false), 150)} maxLength={100} autoComplete="off" aria-label="支票抬頭"
+            className="border rounded px-2 py-2 text-sm bg-white" placeholder="例：香港電燈有限公司" />
+          {suggestOpen && matches.length > 0 && (
+            <div className="absolute top-full left-0 right-0 z-10 mt-1 bg-white border rounded shadow-md text-sm" role="listbox">
+              {matches.map(p => (
+                <button key={p.payeeName} type="button" role="option" aria-selected={false} onMouseDown={e => e.preventDefault()}
+                  onClick={() => { setPayeeName(p.payeeName); setSuggestOpen(false) }}
+                  className="block w-full text-left px-3 py-1.5 hover:bg-slate-50 border-t first:border-t-0">
+                  {p.payeeName} <span className="text-xs text-slate-500">· 上次 {p.lastMonth} · HK${money(p.lastAmount)}</span>
+                </button>
+              ))}
+            </div>
+          )}
+          <span className="text-[11px] text-slate-500">打過嘅抬頭會自動提示</span>
+        </label>
+        <label className="flex flex-col gap-1 text-xs text-slate-600">
+          <span>金額（HK$）<span className="text-red-600"> *</span></span>
+          <input value={amount} onChange={e => setAmount(e.target.value)} inputMode="decimal" aria-label="金額"
+            className="border rounded px-2 py-2 text-sm font-mono text-right bg-white" placeholder="0.00" />
+          {preview?.ok && <span className="font-mono text-[11px] text-blue-900 border border-dashed border-blue-300 rounded px-2 py-1 bg-white">{preview.words.filter(Boolean).join(' ')}</span>}
+        </label>
+        <label className="flex flex-col gap-1 text-xs text-slate-600">
+          <span>用途／備註<span className="text-red-600"> *</span></span>
+          <input value={purpose} onChange={e => setPurpose(e.target.value)} maxLength={200} aria-label="用途"
+            className="border rounded px-2 py-2 text-sm bg-white" placeholder="例：9 月電費（旺角）" />
+        </label>
+        <label className="flex flex-col gap-1 text-xs text-slate-600">
+          <span>出票診所（戶口）<span className="text-red-600"> *</span></span>
+          <select value={clinicId} onChange={e => setClinicId(e.target.value)} aria-label="出票診所" className="border rounded px-2 py-2 text-sm bg-white">
+            <option value="">揀診所…</option>
+            {clinics.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+          <span className="text-[11px] text-slate-500">只列用緊呢本支票簿嘅診所</span>
+        </label>
+      </div>
+      <div className="flex flex-wrap items-center justify-between gap-3 mt-3">
+        <span className="text-xs" role="status">
+          {msg ? <span className={msg.endsWith('✓') ? 'text-green-700' : 'text-red-700'}>{msg}</span>
+            : preview?.ok ? <span className="text-green-700">✓ 塞得落支票</span>
+              : preview && !preview.ok ? <span className="text-red-700">塞唔落支票：{preview.error}</span> : null}
+        </span>
+        <div className="flex gap-2">
+          {editing && <button type="button" onClick={onCancel} disabled={busy} className="h-10 px-4 rounded-md border text-sm">取消修改</button>}
+          <button type="button" onClick={submit} disabled={busy || !payeeName.trim() || !amountOk || !purpose.trim() || !clinicId}
+            className="h-10 px-5 rounded-md bg-brand text-white text-sm font-semibold disabled:opacity-50">
+            {busy ? '儲存中…' : editing ? '儲存修改' : '＋ 加入清單'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ---------- 逐張打印 ----------
 
 type Phase =
@@ -291,6 +456,14 @@ function PrintSession({ rows, layout, accountId, accountLabel, month, chequeDate
   const [voidReason, setVoidReason] = useState('印壞／對位唔啱')
   const [busy, setBusy] = useState(false)
   const off = { x: layout.offsetXmm, y: layout.offsetYmm }
+  // ★ cwm-chequemanual-20261013：手動票冇系統數字對住 → 開始之前逐張剔核對
+  const manualRows = rows.filter(r => r.sourceType === 'MANUAL')
+  const [ticked, setTicked] = useState<Set<string>>(new Set())
+  const allTicked = manualRows.every(r => ticked.has(rowKey(r)))
+  const wordsOf = (r: Row) => {
+    const b = buildContent({ payee: r.payee ?? '', amount: r.amount, date: chequeDate }, layout.fields, layout.printerMode)
+    return b.ok ? b.content.words.filter(Boolean).join(' ') : b.error
+  }
 
   const patch = (id: string, body: object) => apiFetch(`/api/cheques/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
 
@@ -366,10 +539,26 @@ function PrintSession({ rows, layout, accountId, accountLabel, month, chequeDate
                 <div className="text-3xl font-bold font-mono my-1">#{firstNo ?? '—'}</div>
                 <div className="text-sm">請確認支票簿最面嗰張實物支票係呢個號碼。唔啱就先去 <Link href="/cheques/settings" className="underline">支票設定</Link> 改「下一張」。</div>
               </div>
+              {manualRows.length > 0 && (
+                <div className="flex flex-col gap-2">
+                  <div className="text-sm font-semibold">手動票：請逐張核對抬頭同金額（{manualRows.length} 張都剔晒先可以開始）</div>
+                  {manualRows.map(r => (
+                    <label key={rowKey(r)} className="flex gap-3 items-start border rounded-lg px-3 py-2 text-sm cursor-pointer">
+                      <input type="checkbox" className="mt-1" checked={ticked.has(rowKey(r))} aria-label={`核對 ${r.payee}`}
+                        onChange={() => setTicked(t => { const n = new Set(t); n.has(rowKey(r)) ? n.delete(rowKey(r)) : n.add(rowKey(r)); return n })} />
+                      <span>
+                        <b>{r.payee}</b> · <span className="font-mono">HK${money(r.amount)}</span><br />
+                        <span className="font-mono text-xs text-blue-900">{wordsOf(r)}</span><br />
+                        <span className="text-xs text-slate-500">{r.manual?.purpose} · {r.clinicName}</span>
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              )}
               <div className="text-sm text-slate-600">每張印完要睇一睇：「印得好」先印下一張；「作廢」= 呢個號碼記做作廢（實物支票剪角保留），用下一張重印。</div>
               <div className="flex justify-end gap-3">
                 <button type="button" onClick={onClose} className="h-11 px-5 rounded-md border">取消</button>
-                <button type="button" onClick={() => printNext(queue)} className="h-11 px-6 rounded-md bg-brand text-white font-semibold">號碼啱，開始</button>
+                <button type="button" disabled={!allTicked} onClick={() => printNext(queue)} className="h-11 px-6 rounded-md bg-brand text-white font-semibold disabled:opacity-50">號碼啱，開始</button>
               </div>
             </>
           )}

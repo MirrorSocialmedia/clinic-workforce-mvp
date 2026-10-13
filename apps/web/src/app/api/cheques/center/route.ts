@@ -1,6 +1,7 @@
 // ============================================================
 // ★ cwm-chequeprint-20261005：GET /api/cheques/center?month=YYYY-MM&accountId= — 支票打印中心（只限老闆）
-//   回傳：戶口、版面、三個分頁（員工／醫生／Lab）、本月呢個戶口已出嘅票（連作廢）
+//   回傳：戶口、版面、四個分頁（員工／醫生／Lab／手動）、本月呢個戶口已出嘅票（連作廢）
+//   ★ cwm-chequemanual-20261013：加 manuals、clinics（呢本支票簿嘅診所）、manualPayees（抬頭提示）
 // ============================================================
 export const dynamic = 'force-dynamic'
 
@@ -9,7 +10,7 @@ import { prisma } from '@/lib/prisma'
 import { requireAuth, isAuthError } from '@/lib/require-auth'
 import { jsonNoStore } from '@/lib/api-response'
 import { handleRoute } from '@/lib/api-guard'
-import { formatNo, isMonth, listLayouts, loadCenter } from '@/lib/cheque-print/server'
+import { formatNo, isMonth, listLayouts, loadCenter, manualPayeeSuggestions } from '@/lib/cheque-print/server'
 
 export async function GET(req: NextRequest) {
   const auth = await requireAuth(req, 'GET', req.url)
@@ -23,10 +24,16 @@ export async function GET(req: NextRequest) {
     if (!account) return jsonNoStore({ error: '搵唔到呢個戶口' }, { status: 404 })
     const layouts = await listLayouts()
     const layout = layouts.find(l => l.id === account.layoutId) ?? layouts[0]
-    const [center, issued] = await Promise.all([
+    const [center, issued, manualPayees, accClinics] = await Promise.all([
       loadCenter(month, accountId),
       prisma.cheque.findMany({ where: { accountId, periodMonth: month }, orderBy: { chequeNo: 'asc' } }),
+      manualPayeeSuggestions(), // ★ cwm-chequemanual-20261013：手動票抬頭提示
+      prisma.chequeAccountClinic.findMany({ where: { accountId }, select: { clinicId: true } }),
     ])
+    // ★ cwm-chequemanual-20261013：手動票「出票診所」只可以揀用緊呢本支票簿嘅診所
+    const clinics = accClinics.length
+      ? await prisma.clinic.findMany({ where: { id: { in: accClinics.map(c => c.clinicId) } }, select: { id: true, name: true }, orderBy: { name: 'asc' } })
+      : []
     return jsonNoStore({
       account: {
         id: account.id, label: account.label, bankName: account.bankName, accountLast4: account.accountLast4,
@@ -36,6 +43,8 @@ export async function GET(req: NextRequest) {
       },
       layout,
       ...center,
+      clinics,
+      manualPayees,
       issued: issued.map(c => ({
         id: c.id, chequeNo: c.chequeNo, sourceType: c.sourceType, sourceId: c.sourceId, payeeName: c.payeeName,
         amount: Number(c.amount), chequeDate: c.chequeDate, status: c.status, confirmed: !!c.confirmedAt,

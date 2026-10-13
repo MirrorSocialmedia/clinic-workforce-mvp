@@ -66,6 +66,9 @@ export const SENSITIVE_AUDIT_SPEC: Array<{ action: string; entity?: string; labe
   { action: 'CHEQUE_RELEASE', label: '支票送唔到打印機・退號' },
   { action: 'CHEQUE_SETTING_UPDATE', label: '支票設定（戶口／版面／抬頭）' },
   { action: 'LAB_CHEQUE_AMOUNT_UPDATE', label: 'Lab 月結金額（支票用）' },
+  { action: 'MANUAL_CHEQUE_CREATE', label: '新增手動支票' }, // ★ cwm-chequemanual-20261013
+  { action: 'MANUAL_CHEQUE_UPDATE', label: '修改手動支票' },
+  { action: 'MANUAL_CHEQUE_DELETE', label: '⚠️ 刪除手動支票' },
   { action: 'CHEQUE_RECORDS_EXPORT', label: '匯出支票紀錄（Excel）' }, // ★ cwm-chequerec-20261005
   { action: 'EMPLOYEE_REHIRE', label: '重新聘用' },
   { action: 'EMPLOYEE_RESIGN', label: '員工辭職' },

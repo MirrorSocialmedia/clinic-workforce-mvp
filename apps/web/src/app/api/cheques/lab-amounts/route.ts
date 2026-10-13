@@ -28,26 +28,35 @@ export async function PUT(req: NextRequest) {
     ])
     if (!lab || !clinic) return jsonNoStore({ error: '搵唔到 Lab 或者診所' }, { status: 404 })
 
-    const before = await prisma.labChequeAmount.findUnique({ where: { labId_clinicId_periodMonth: { labId, clinicId, periodMonth: month } } })
-    if (before) {
-      const issued = await prisma.cheque.findFirst({ where: { sourceType: 'LAB_AMOUNT', sourceId: before.id, status: { not: 'VOID' } }, select: { chequeNo: true } })
-      if (issued) return jsonNoStore({ error: `已經出咗票 #${issued.chequeNo}，要改金額請先作廢張票` }, { status: 409 })
-    }
-
+    // ★ cwm-chequemanual-20261013：查「有冇出票」同寫入放埋同一個 transaction，鎖住嗰行
+    //   （出票嗰邊亦鎖同一行再核對金額）→ 唔會出現「張票印咗舊金額、記錄係新金額」
     const text = (v: unknown, max: number) => typeof v === 'string' && v.trim() ? v.trim().slice(0, max) : null
-    let after: any = null
-    if (b.amount === null || b.amount === '') {
-      if (before) await prisma.labChequeAmount.delete({ where: { id: before.id } })
-    } else {
-      const amount = Math.round(Number(b.amount) * 100) / 100
-      if (!Number.isFinite(amount) || amount <= 0 || amount >= 1e9) return jsonNoStore({ error: '金額要大過 0' }, { status: 400 })
-      const data = { amount, statementRef: text(b.statementRef, 40), note: text(b.note, 200), updatedBy: session.userId }
-      after = await prisma.labChequeAmount.upsert({
-        where: { labId_clinicId_periodMonth: { labId, clinicId, periodMonth: month } },
-        create: { labId, clinicId, periodMonth: month, ...data },
-        update: data,
-      })
-    }
+    const del = b.amount === null || b.amount === ''
+    const amount = del ? 0 : Math.round(Number(b.amount) * 100) / 100
+    if (!del && (!Number.isFinite(amount) || amount <= 0 || amount >= 1e9)) return jsonNoStore({ error: '金額要大過 0' }, { status: 400 })
+    const res = await prisma.$transaction(async tx => {
+      const found = await tx.labChequeAmount.findUnique({ where: { labId_clinicId_periodMonth: { labId, clinicId, periodMonth: month } }, select: { id: true } })
+      if (found) await tx.$queryRaw`SELECT id FROM "LabChequeAmount" WHERE id = ${found.id} FOR UPDATE`
+      const before = found ? await tx.labChequeAmount.findUnique({ where: { id: found.id } }) : null
+      if (before) {
+        const issued = await tx.cheque.findFirst({ where: { sourceType: 'LAB_AMOUNT', sourceId: before.id, status: { not: 'VOID' } }, select: { chequeNo: true } })
+        if (issued) return { conflict: `已經出咗票 #${issued.chequeNo}，要改金額請先作廢張票` } as const
+      }
+      let after: any = null
+      if (del) {
+        if (before) await tx.labChequeAmount.delete({ where: { id: before.id } })
+      } else {
+        const data = { amount, statementRef: text(b.statementRef, 40), note: text(b.note, 200), updatedBy: session.userId }
+        after = await tx.labChequeAmount.upsert({
+          where: { labId_clinicId_periodMonth: { labId, clinicId, periodMonth: month } },
+          create: { labId, clinicId, periodMonth: month, ...data },
+          update: data,
+        })
+      }
+      return { before, after } as const
+    })
+    if ('conflict' in res) return jsonNoStore({ error: res.conflict }, { status: 409 })
+    const { before, after } = res
     await prisma.auditLog.create({
       data: {
         actorId: session.userId, action: 'LAB_CHEQUE_AMOUNT_UPDATE', entity: 'LabChequeAmount', entityId: after?.id ?? before?.id ?? `${labId}|${clinicId}|${month}`,

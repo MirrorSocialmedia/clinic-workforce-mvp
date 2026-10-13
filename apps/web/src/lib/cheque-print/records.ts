@@ -1,6 +1,6 @@
 // ============================================================
 // ★ cwm-chequerec-20261005：支票紀錄 —— 由 Cheque 表讀（每張印過嘅票，連作廢）
-//   對應人逐類別批量反查：計糧 → 員工花名；醫生月結 → 「Dr.Ho · 何嘉俊」；Lab → Lab 名
+//   對應人逐類別批量反查：計糧 → 員工花名；醫生月結 → 「Dr.Ho · 何嘉俊」；Lab → Lab 名；手動 → 用途
 //   只限老闆（config.ts RBAC = OWNER）
 // ============================================================
 import { prisma } from '@/lib/prisma'
@@ -23,13 +23,15 @@ export async function loadChequeRecords(f: RecordFilters): Promise<{ rows: Chequ
   const list = truncated ? cheques.slice(0, MAX_ROWS) : cheques
 
   const idsOf = (kind: ChequeKind) => list.filter(c => c.sourceType === kind).map(c => c.sourceId)
-  const [accounts, clinics, items, runs, labAmounts, users] = await Promise.all([
+  const [accounts, clinics, items, runs, labAmounts, users, manuals] = await Promise.all([
     prisma.chequeAccount.findMany({ select: { id: true, label: true, accountLast4: true } }),
     prisma.clinic.findMany({ select: { id: true, name: true } }),
     prisma.payrollItem.findMany({ where: { id: { in: idsOf('PAYROLL_ITEM') } }, select: { id: true, employee: { select: { user: { select: { name: true } } } } } }),
     prisma.payoutRun.findMany({ where: { id: { in: idsOf('PAYOUT_RUN') } }, select: { id: true, providerId: true } }),
     prisma.labChequeAmount.findMany({ where: { id: { in: idsOf('LAB_AMOUNT') } }, select: { id: true, labId: true } }),
     prisma.user.findMany({ where: { id: { in: [...new Set(list.map(c => c.printedBy))] } }, select: { id: true, name: true } }),
+    // ★ cwm-chequemanual-20261013：手動票 → 用途（連已刪嘅都搵，舊紀錄仲睇到）
+    prisma.manualCheque.findMany({ where: { id: { in: idsOf('MANUAL') } }, select: { id: true, purpose: true } }),
   ])
   const [providers, labs] = await Promise.all([
     runs.length ? prisma.provider.findMany({ where: { id: { in: [...new Set(runs.map(r => r.providerId))] } }, select: { id: true, name: true, nameZh: true } }) : Promise.resolve([]),
@@ -44,12 +46,14 @@ export async function loadChequeRecords(f: RecordFilters): Promise<{ rows: Chequ
   const labName = new Map(labs.map(l => [l.id, l.name]))
   const labOf = new Map(labAmounts.map(a => [a.id, labName.get(a.labId) ?? '']))
   const userName = new Map(users.map(u => [u.id, u.name]))
+  const manualPurpose = new Map(manuals.map(m => [m.id, m.purpose]))
 
   const rows: ChequeRecord[] = list.map(c => {
     const kind = c.sourceType as ChequeKind
     const refLabel = kind === 'PAYROLL_ITEM' ? empName.get(c.sourceId)
       : kind === 'PAYOUT_RUN' ? runProvider.get(c.sourceId)
-        : labOf.get(c.sourceId)
+        : kind === 'MANUAL' ? manualPurpose.get(c.sourceId)
+          : labOf.get(c.sourceId)
     return {
       id: c.id, chequeNo: c.chequeNo, chequeDate: c.chequeDate, periodMonth: c.periodMonth, kind,
       payeeName: c.payeeName, refLabel: refLabel || '（來源已刪除）',

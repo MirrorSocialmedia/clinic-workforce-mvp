@@ -4,6 +4,7 @@
 //     PAYROLL_ITEM：計糧（金額 = totalPayable，已含雜項；出糧診所跟 ChequeSheetPayer，冇就跟計糧單診所）
 //     PAYOUT_RUN  ：醫生月結（每醫生每診所一張，要 LOCKED）
 //     LAB_AMOUNT  ：Lab 月結金額（人手輸入，隨時改）
+//     MANUAL      ：手動開票（老闆自己輸入抬頭＋金額，見 manual.ts）★ cwm-chequemanual-20261013
 //   號碼：戶口 nextNo 起，跳過已用；一出就記（印壞 = VOID，唔會再用）。
 // ============================================================
 import { prisma } from '@/lib/prisma'
@@ -12,9 +13,10 @@ import { HSBC_DEFAULT_FIELDS, HSBC_DEFAULT_OFFSET, normalizeFields, type LayoutF
 import { cleanPayee } from './content'
 import { providerLabel } from '@/lib/provider-label'
 import { missingPayouts, missingSourceId, MISSING_PAYOUT_BLOCKER } from './missing-payouts'
+import { resolveManual } from './manual'
 
-export type SourceType = 'PAYROLL_ITEM' | 'PAYOUT_RUN' | 'LAB_AMOUNT'
-export const SOURCE_TYPES: SourceType[] = ['PAYROLL_ITEM', 'PAYOUT_RUN', 'LAB_AMOUNT']
+export type SourceType = 'PAYROLL_ITEM' | 'PAYOUT_RUN' | 'LAB_AMOUNT' | 'MANUAL'
+export const SOURCE_TYPES: SourceType[] = ['PAYROLL_ITEM', 'PAYOUT_RUN', 'LAB_AMOUNT', 'MANUAL']
 
 export const isMonth = (s: unknown): s is string => typeof s === 'string' && /^\d{4}-(0[1-9]|1[0-2])$/.test(s)
 export const isDate = (s: unknown): s is string => typeof s === 'string' && /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/.test(s)
@@ -72,6 +74,8 @@ export interface CenterRow {
   lab?: { labId: string; statementRef: string | null; note: string | null; systemCost: number }
   /** ★ cwm-chequerec-20261005：醫生未生成月結嘅佔位行（唔計入分頁數字、出唔到票） */
   missing?: boolean
+  /** ★ cwm-chequemanual-20261013：手動票先有 */
+  manual?: { payeeName: string; purpose: string; createdByName: string; createdAt: string }
 }
 
 /** 戶口用緊嘅診所 */
@@ -92,7 +96,7 @@ async function activeCheques(sourceType: SourceType, ids: string[]) {
 const chequeDTO = (c: any) => c ? { id: c.id, chequeNo: c.chequeNo, status: c.status, confirmed: !!c.confirmedAt, chequeDate: c.chequeDate } : null
 
 /** 打印中心：某戶口某月要出嘅票 */
-export async function loadCenter(month: string, accountId: string): Promise<{ employees: CenterRow[]; providers: CenterRow[]; labs: CenterRow[] }> {
+export async function loadCenter(month: string, accountId: string): Promise<{ employees: CenterRow[]; providers: CenterRow[]; labs: CenterRow[]; manuals: CenterRow[] }> {
   const clinicIds = await accountClinicIds(accountId)
   const clinicSet = new Set(clinicIds)
   const clinics = await prisma.clinic.findMany({ select: { id: true, name: true } })
@@ -215,12 +219,50 @@ export async function loadCenter(month: string, accountId: string): Promise<{ em
   const labCheques = await activeCheques('LAB_AMOUNT', labRows.filter(r => !r.sourceId.startsWith('new:')).map(r => r.sourceId))
   labRows.forEach(r => { r.cheque = chequeDTO(labCheques.get(r.sourceId)) })
 
+  // ---------- 手動開票（★ cwm-chequemanual-20261013） ----------
+  const manuals = clinicIds.length
+    ? await prisma.manualCheque.findMany({
+        where: { periodMonth: month, clinicId: { in: clinicIds }, deletedAt: null },
+        orderBy: { createdAt: 'asc' },
+      })
+    : []
+  const creators = manuals.length
+    ? await prisma.user.findMany({ where: { id: { in: [...new Set(manuals.map(m => m.createdBy))] } }, select: { id: true, name: true } })
+    : []
+  const creatorName = new Map(creators.map(u => [u.id, u.name]))
+  const manualRows: CenterRow[] = manuals.map(m => ({
+    sourceType: 'MANUAL' as const, sourceId: m.id, clinicId: m.clinicId, clinicName: clinicName.get(m.clinicId) ?? '',
+    payee: cleanPayee(m.payeeName), label: '手動', detail: m.purpose, amount: Number(m.amount),
+    blocker: null, cheque: null,
+    manual: { payeeName: m.payeeName, purpose: m.purpose, createdByName: creatorName.get(m.createdBy) ?? '', createdAt: m.createdAt.toISOString() },
+  }))
+  const manualCheques = await activeCheques('MANUAL', manualRows.map(r => r.sourceId))
+  manualRows.forEach(r => { r.cheque = chequeDTO(manualCheques.get(r.sourceId)) })
+
   const byClinicThenLabel = (a: CenterRow, b: CenterRow) => a.clinicName.localeCompare(b.clinicName, 'zh-Hant') || a.label.localeCompare(b.label, 'zh-Hant')
-  return { employees: empRows.sort(byClinicThenLabel), providers: provRows.sort((a, b) => Number(!!a.missing) - Number(!!b.missing) || byClinicThenLabel(a, b)), labs: labRows.sort(byClinicThenLabel) }
+  return { employees: empRows.sort(byClinicThenLabel), providers: provRows.sort((a, b) => Number(!!a.missing) - Number(!!b.missing) || byClinicThenLabel(a, b)), labs: labRows.sort(byClinicThenLabel), manuals: manualRows }
+}
+
+/** ★ cwm-chequemanual-20261013：之前手動開過嘅抬頭（打字提示；每個抬頭最近一次） */
+export async function manualPayeeSuggestions(limit = 50): Promise<Array<{ payeeName: string; lastMonth: string; lastAmount: number }>> {
+  const rows = await prisma.manualCheque.findMany({
+    where: { deletedAt: null },
+    orderBy: { createdAt: 'desc' },
+    take: 500,
+    select: { payeeName: true, periodMonth: true, amount: true },
+  })
+  const seen = new Map<string, { payeeName: string; lastMonth: string; lastAmount: number }>()
+  for (const r of rows) {
+    const k = cleanPayee(r.payeeName)
+    if (!seen.has(k)) seen.set(k, { payeeName: r.payeeName, lastMonth: r.periodMonth, lastAmount: Number(r.amount) })
+    if (seen.size >= limit) break
+  }
+  return [...seen.values()]
 }
 
 /** 由來源搵返收款人同金額（出票時重新讀，唔信 client） */
 export async function resolveSource(sourceType: SourceType, sourceId: string, accountId: string, month: string): Promise<{ ok: true; payee: string; amount: number; clinicId: string | null } | { ok: false; error: string }> {
+  if (sourceType === 'MANUAL') return resolveManual(prisma, sourceId, accountId, month)
   const center = await loadCenter(month, accountId)
   const all = [...center.employees, ...center.providers, ...center.labs]
   const row = all.find(r => r.sourceType === sourceType && r.sourceId === sourceId)

@@ -2,7 +2,7 @@
 
 // ============================================================
 // ★ cwm-chequerec-20261005：支票紀錄（只限老闆；API RBAC = OWNER）
-//   每張印過嘅票（員工／醫生／Lab，連作廢）—— 跨月份、跨戶口搵；匯出 Excel（全部／作廢／合計三個 sheet）
+//   每張印過嘅票（員工／醫生／Lab／手動，連作廢）—— 跨月份、跨戶口搵；匯出 Excel（全部／作廢／合計三個 sheet）
 // ============================================================
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
@@ -10,7 +10,7 @@ import Link from 'next/link'
 import { apiFetch } from '@/lib/api-client'
 import { todayHK } from '@/lib/hk-date'
 
-type Kind = 'PAYROLL_ITEM' | 'PAYOUT_RUN' | 'LAB_AMOUNT'
+type Kind = 'PAYROLL_ITEM' | 'PAYOUT_RUN' | 'LAB_AMOUNT' | 'MANUAL'
 interface Rec {
   id: string; chequeNo: string; chequeDate: string; periodMonth: string; kind: Kind; payeeName: string; refLabel: string
   clinicName: string; accountLabel: string; amount: number; status: string; confirmed: boolean
@@ -23,7 +23,7 @@ interface Summary {
 }
 interface Resp { rows: Rec[]; summary: Summary; truncated: boolean; maxRows: number; accounts: Array<{ id: string; label: string; accountLast4: string | null }> }
 
-const KIND_LABEL: Record<Kind, string> = { PAYROLL_ITEM: '員工', PAYOUT_RUN: '醫生', LAB_AMOUNT: 'Lab' }
+const KIND_LABEL: Record<Kind, string> = { PAYROLL_ITEM: '員工', PAYOUT_RUN: '醫生', LAB_AMOUNT: 'Lab', MANUAL: '手動' } // ★ cwm-chequemanual-20261013
 const money = (n: number) => n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const hkTime = (iso: string | null) => {
   if (!iso) return ''
@@ -76,7 +76,7 @@ export default function ChequeRecordsPage() {
 
   const exportXlsx = () => window.open(`/api/cheques/records/export?${query}`, '_blank')
 
-  const kinds: Array<[Kind | '', string]> = [['', '全部'], ['PAYROLL_ITEM', '員工'], ['PAYOUT_RUN', '醫生'], ['LAB_AMOUNT', 'Lab']]
+  const kinds: Array<[Kind | '', string]> = [['', '全部'], ['PAYROLL_ITEM', '員工'], ['PAYOUT_RUN', '醫生'], ['LAB_AMOUNT', 'Lab'], ['MANUAL', '手動']]
   const statuses: Array<['' | 'PRINTED' | 'VOID', string]> = [['', '全部'], ['PRINTED', '已出票'], ['VOID', '已作廢']]
 
   return (
@@ -140,7 +140,7 @@ export default function ChequeRecordsPage() {
       )}
 
       {data && (
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
+        <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3 mb-4">
           {data.summary.byKind.map(k => (
             <div key={k.kind} className="border rounded-lg bg-white px-4 py-3">
               <div className="text-xs text-slate-500">{k.label}（已出票）</div>

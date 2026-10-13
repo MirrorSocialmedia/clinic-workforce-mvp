@@ -253,6 +253,9 @@ export const CONFIG = {
     'PUT /api/cheques/lab-amounts': ['OWNER'],
     'POST /api/cheques/issue': ['OWNER'],
     'PATCH /api/cheques/:id': ['OWNER'],
+    'POST /api/cheques/manual': ['OWNER'], // ★ cwm-chequemanual-20261013：手動開票
+    'PUT /api/cheques/manual/:id': ['OWNER'],
+    'DELETE /api/cheques/manual/:id': ['OWNER'],
     'GET /api/payroll-runs/exceptions': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
     'GET /api/payroll-runs/allowed-clinics': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
 
