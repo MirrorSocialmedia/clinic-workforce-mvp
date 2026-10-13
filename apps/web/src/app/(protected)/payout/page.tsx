@@ -627,9 +627,11 @@ function PayoutRunsPageInner() {
                 <div className="flex justify-between"><span>收入（扣手續費後）</span><span>${previewData.preview.grossAmount?.toFixed(2)}</span></div>
                 {/* ★ cwm-costdetail-20261006：成本可撳開 —— 已計入＋當月未計入提醒 */}
                 <CostDetailRow label="Lab 成本" amount={previewData.preview.labCost ?? 0} detail={previewData.costDetail?.LAB}
-                  providerId={selectedProvider} clinicId={selectedClinic} month={selectedMonth} receivedBased />
+                  providerId={selectedProvider} clinicId={selectedClinic} month={selectedMonth} receivedBased
+                  checkSummary={previewData.costCheck?.summary?.LAB} labMarks={previewData.costCheck?.labMarks} />
                 <CostDetailRow label="植牙成本" amount={previewData.preview.implantCost ?? 0} detail={previewData.costDetail?.IMPLANT}
-                  providerId={selectedProvider} clinicId={selectedClinic} month={selectedMonth} receivedBased={false} />
+                  providerId={selectedProvider} clinicId={selectedClinic} month={selectedMonth} receivedBased={false}
+                  checkSummary={previewData.costCheck?.summary?.IMPLANT} />
                 {/* ★ cwm-invismerge-20261006：隱形矯正已併入 LAB —— 只喺舊資料（已鎖定月份重新預覽）有數先顯示 */}
                 {((previewData.preview.invisalignCost ?? 0) !== 0 || (previewData.costDetail?.INVISALIGN?.counted?.length ?? 0) > 0) && (
                   <CostDetailRow label="Invisalign 成本（舊類別）" amount={previewData.preview.invisalignCost ?? 0} detail={previewData.costDetail?.INVISALIGN}

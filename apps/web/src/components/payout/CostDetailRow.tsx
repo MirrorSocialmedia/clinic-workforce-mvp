@@ -4,15 +4,19 @@
 // ★ cwm-costdetail-20261006：月結預覽 —— 成本類別可撳開睇明細
 //   已計入（同月結數一致）＋當月未計入提醒（未有價錢／本月落單未到貨／之前 2 個月內落單未到貨）
 //   病人只出編號；每行「去成本錄入 ›」帶篩選開成本錄入頁
+//   ★ cwm-paycostcheck-20261014：已計入逐筆「有冇經月結單／invoice 核對」—— 同成本錄入一樣綠（月／單／黃色提示）
 // ============================================================
 import { useState } from 'react'
+import { StatementMarkPill, StatementLinkTag, InvoiceTag, type StatementMarkProp, type StatementLinkProp } from '@/components/labdoc/CostCheckTags'
 
 export interface CostRow {
   id: string; category: string; orderedAt: string; receivedAt: string | null; patientCode: string
   vendor: string; item: string; amount: number | null; status: string; periodMonth: string | null
   crossMonth: boolean; redo: boolean; daysWaiting?: number
   pending?: 'NOT_RECEIVED' | 'UNPRICED'; periodLocked?: boolean
+  check?: { green: boolean; statement: StatementLinkProp | null; invoices: Array<{ id: string; docNo: string | null }> }
 }
+export interface CheckSummary { green: number; warn: number; none: number }
 export interface CategoryDetail {
   counted: CostRow[]; countedTotal: number; unpriced: CostRow[]; notReceived: CostRow[]
   lastMonth: CostRow[]; voided: CostRow[]; reminders: number
@@ -26,7 +30,7 @@ export function costEntryHref(r: CostRow, providerId: string, clinicId: string) 
   return `/cost-entry?${qs}`
 }
 
-export function CostDetailRow({ label, amount, detail, providerId, clinicId, month, receivedBased }: {
+export function CostDetailRow({ label, amount, detail, providerId, clinicId, month, receivedBased, checkSummary, labMarks }: {
   label: string
   amount: number
   detail: CategoryDetail | undefined
@@ -35,6 +39,10 @@ export function CostDetailRow({ label, amount, detail, providerId, clinicId, mon
   month: string
   /** LAB／INVISALIGN 以到貨日計；IMPLANT 以落單日計 */
   receivedBased: boolean
+  /** ★ cwm-paycostcheck-20261014：已計入嘅單有幾多經核對 */
+  checkSummary?: CheckSummary
+  /** ★ 逐間 Lab 月結標示（key = 工廠名） */
+  labMarks?: Record<string, StatementMarkProp>
 }) {
   const [open, setOpen] = useState(false)
   const [showVoid, setShowVoid] = useState(false)
@@ -57,6 +65,9 @@ export function CostDetailRow({ label, amount, detail, providerId, clinicId, mon
           <span aria-hidden className="w-3 text-xs">{has ? (open ? '▾' : '▸') : ''}</span>
           {label}
           {detail && detail.counted.length > 0 && <span className="text-xs text-gray-500">已計入 {detail.counted.length} 單</span>}
+          {checkSummary && checkSummary.green > 0 && <span className="text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-800">✓ {checkSummary.green} 單已核對</span>}
+          {checkSummary && checkSummary.warn > 0 && <span className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-800">⚠ {checkSummary.warn} 單月結有出入</span>}
+          {checkSummary && checkSummary.none > 0 && <span className="text-xs px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">{checkSummary.none} 單未核對</span>}
           {detail && detail.reminders > 0 && (
             <span className="text-xs px-2 py-0.5 rounded-full bg-amber-50 text-amber-800 border border-amber-300">⚠ {detail.reminders} 項當月未計入</span>
           )}
@@ -74,8 +85,14 @@ export function CostDetailRow({ label, amount, detail, providerId, clinicId, mon
 
           <div>
             <div className="text-sm font-semibold text-green-800 mb-1">✓ 已計入（{detail.counted.length} 單 · ${money(detail.countedTotal)}）</div>
+            {labMarks && Object.keys(labMarks).length > 0 && (
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-600 mb-1.5">
+                <span>逐間 Lab：</span>
+                {Object.entries(labMarks).map(([name, mk]) => <span key={name} className="inline-flex items-center gap-1">{name} <StatementMarkPill mark={mk} /></span>)}
+              </div>
+            )}
             {detail.counted.length > 0
-              ? <RowTable rows={detail.counted} providerId={providerId} clinicId={clinicId} showTags />
+              ? <RowTable rows={detail.counted} providerId={providerId} clinicId={clinicId} showTags showCheck={!!checkSummary} />
               : <div className="text-xs text-gray-500">冇</div>}
           </div>
 
@@ -126,7 +143,7 @@ function PendingCell({ r, month }: { r: CostRow; month: string }) {
   )
 }
 
-function RowTable({ rows, providerId, clinicId, showTags, link, status }: { rows: CostRow[]; providerId: string; clinicId: string; showTags?: boolean; link?: boolean; status?: string }) {
+function RowTable({ rows, providerId, clinicId, showTags, link, status, showCheck }: { rows: CostRow[]; providerId: string; clinicId: string; showTags?: boolean; link?: boolean; status?: string; showCheck?: boolean }) {
   return (
     <div className="overflow-x-auto rounded border border-gray-200">
       <table className="w-full text-xs">
@@ -139,12 +156,13 @@ function RowTable({ rows, providerId, clinicId, showTags, link, status }: { rows
             <th className="text-left font-semibold px-2 py-1">項目</th>
             <th className="text-right font-semibold px-2 py-1">金額</th>
             {status && <th className="text-left font-semibold px-2 py-1">狀況</th>}
+            {showCheck && <th className="text-left font-semibold px-2 py-1">核對</th>}
             <th className="px-2 py-1"></th>
           </tr>
         </thead>
         <tbody>
           {rows.map(r => (
-            <tr key={r.id} className="border-t border-gray-100">
+            <tr key={r.id} className={`border-t border-gray-100 ${showCheck && r.check?.green ? 'bg-green-50' : ''}`}>
               <td className="px-2 py-1 font-mono">{md(r.receivedAt)}</td>
               <td className="px-2 py-1 font-mono text-gray-500">{md(r.orderedAt)}</td>
               <td className="px-2 py-1 font-mono">{r.patientCode}</td>
@@ -152,6 +170,14 @@ function RowTable({ rows, providerId, clinicId, showTags, link, status }: { rows
               <td className="px-2 py-1">{r.item}</td>
               <td className={`px-2 py-1 text-right font-mono ${r.amount == null ? 'text-red-700' : ''}`}>{money(r.amount)}</td>
               {status && <td className="px-2 py-1"><PendingCell r={r} month={status} /></td>}
+              {showCheck && (
+                <td className="px-2 py-1 whitespace-nowrap">
+                  {r.check?.invoices.map(inv => <InvoiceTag key={inv.id} inv={inv} />)}
+                  <StatementLinkTag link={r.check?.statement ?? null} finalCost={r.amount} />
+                  {r.check?.green && <span className="ml-1 text-green-800">{r.check.statement?.state === 'OK' ? '月結已核對' : 'invoice 已對'}</span>}
+                  {!r.check?.green && !r.check?.statement && <span className="text-gray-400">未核對</span>}
+                </td>
+              )}
               <td className="px-2 py-1 whitespace-nowrap">
                 {showTags && r.crossMonth && <span className="text-blue-700">{Number(r.orderedAt.slice(5, 7))} 月落單</span>}
                 {showTags && r.redo && <span className="text-blue-700 ml-1">重做</span>}
