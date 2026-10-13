@@ -5,6 +5,7 @@
 //    （§11：503 只喺「再讀」時回；上傳時嘅背景讀單 fail 靜靜入 EXTRACT_FAILED）
 //  - 人手再讀 = 一輪新嘅 3 次上限：claim 時重置 extractAttempts=0
 //    （sweep 路徑從唔重置 — 防 attempts 永遠清零無限重試）
+//  - ★ 2026-10-13：有人手改／加嘅月結單行 → 409 MANUAL_LINES（body { confirmManual: true } 先讀）
 //  - ★ 2026-10-11：EXTRACT_FAILED → UPLOADED（重新排到隊尾，queuedAt = now）→ 叫醒排隊 worker
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -45,6 +46,23 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
   if (doc.status !== 'EXTRACT_FAILED') {
     return NextResponse.json({ error: '只有讀單失敗嘅單據可以再讀' }, { status: 400 })
+  }
+
+  // ★ 2026-10-13（用家拍板 3）：有人手改／加嘅月結單行 → 再讀會清走，先問用家（body.confirmManual=true 先讀）
+  const manualLines = await prisma.labStatementLine.count({ where: { manualSource: { not: null }, section: { documentId: id } } })
+  if (manualLines > 0) {
+    let confirmManual = false
+    try {
+      confirmManual = (await req.json())?.confirmManual === true
+    } catch {
+      confirmManual = false
+    }
+    if (!confirmManual) {
+      return NextResponse.json(
+        { error: `呢份單有 ${manualLines} 行人手改／加，再讀會清走 — 確定再讀？`, code: 'MANUAL_LINES', manualLines },
+        { status: 409, headers: { 'cache-control': 'no-store' } },
+      )
+    }
   }
 
   const claimed = await prisma.labDocument.updateMany({

@@ -2165,6 +2165,14 @@ model LabStatementLine {
   //   carriedFromLineId = 上個月嗰行；carriedFromMonth = 上個月（顯示用）。對數時同步（statement-carry.ts）
   carriedFromLineId String?
   carriedFromMonth  String?
+  // ★ 2026-10-13：人手改行／加行（AI 讀漏／讀錯）
+  //   manualSource：null = AI 讀；EDITED = AI 讀咗、人手改過；ADDED = 人手加（只有呢種可以刪）
+  //   aiOriginal：第一次改之前 AI 讀到嘅值（{ amount, docNoRaw, date, description, patientCode }）— 永遠保留
+  manualSource      String?
+  aiOriginal        Json?
+  manualBy          String?
+  manualAt          DateTime?
+  manualNote        String?
 
   @@unique([sectionId, lineIndex])
   @@unique([sectionId, carriedFromLineId])

@@ -135,6 +135,8 @@ function applyData(d: DocRow, data: Any): void {
 
 // ── fake prisma（upload route + runner 兩邊都要） ───────────
 const fakes: Record<string, Any> = {
+  // ★ 2026-10-13：retry 會數人手改／加嘅月結單行（呢度嘅單冇）
+  labStatementLine: { count: async () => 0 },
   user: {
     findUnique: async ({ where }: Any) => state.users[where.id] ?? null,
   },
