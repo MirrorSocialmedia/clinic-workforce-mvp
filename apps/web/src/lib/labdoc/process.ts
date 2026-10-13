@@ -14,6 +14,9 @@ import { loadPdfjs, pdfjsDocOptions } from './pdfjs'
 export const DISPLAY_MAX_EDGE = 1600
 export const THUMB_MAX_EDGE = 320
 export const PDF_MAX_PAGES = 30
+/** @napi-rs/canvas toBuffer('image/jpeg', quality) — quality 0–100（同 sharp 圖片路徑 85／80 一致） */
+export const JPEG_QUALITY_DISPLAY = 85
+export const JPEG_QUALITY_THUMB = 80
 const PAGE_TEXT_LAYER_THRESHOLD = 20 // §4.2：每頁文字 ≥ 20 字先算有文字層
 
 export class LabDocProcessError extends Error {
@@ -212,14 +215,16 @@ export async function processPdf(raw: Buffer): Promise<ProcessedPdf> {
       const dispVp = page.getViewport({ scale: dispScale })
       const dispCanvas = createCanvas(Math.max(1, Math.floor(dispVp.width)), Math.max(1, Math.floor(dispVp.height)))
       await page.render({ canvasContext: dispCanvas.getContext('2d'), viewport: dispVp }).promise
-      const display = dispCanvas.toBuffer('image/jpeg', 0.85)
+      // ★ 2026-10-13：@napi-rs/canvas 嘅 JPEG 質素係 0–100（唔係 0–1）。之前寫 0.85 → 質素 ≈1，
+      //   細字表格（例：禾呈月結單）糊到字都斷晒，而且 VISION 讀單用嘅都係呢張圖。
+      const display = dispCanvas.toBuffer('image/jpeg', JPEG_QUALITY_DISPLAY)
 
       // 縮圖：長邊 ≤ 320（唔放大）
       const thumbScale = Math.min(THUMB_MAX_EDGE / Math.max(baseVp.width, baseVp.height), 1)
       const thumbVp = page.getViewport({ scale: thumbScale })
       const thumbCanvas = createCanvas(Math.max(1, Math.floor(thumbVp.width)), Math.max(1, Math.floor(thumbVp.height)))
       await page.render({ canvasContext: thumbCanvas.getContext('2d'), viewport: thumbVp }).promise
-      const thumb = thumbCanvas.toBuffer('image/jpeg', 0.8)
+      const thumb = thumbCanvas.toBuffer('image/jpeg', JPEG_QUALITY_THUMB)
 
       pages.push({
         pageNo: i,

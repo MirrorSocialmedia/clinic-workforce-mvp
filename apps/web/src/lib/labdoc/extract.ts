@@ -42,6 +42,7 @@ import { autoReconcileIfReady } from './statement-reconcile'
 import { buildPageKey, readEncrypted } from './storage'
 import { normPatientCode } from '../cost-entry/patient-code'
 import { loadPdfjs, pdfjsDocOptions } from './pdfjs'
+import { pdfItemsToText } from './pdf-text'
 
 /** §5.1：三次失敗先 EXTRACT_FAILED */
 export const LABDOC_MAX_ATTEMPTS = 3
@@ -110,7 +111,8 @@ async function extractPdfPageTexts(pdfBuf: Buffer): Promise<string[]> {
       let t = ''
       try {
         const tc = await page.getTextContent()
-        t = tc.items.map((it: any) => String(it.str ?? '')).join('')
+        // ★ 2026-10-13：按位置砌返一行一行（之前 join('') 成頁黐埋一行 — 表格 PDF 讀唔到）
+        t = pdfItemsToText(tc.items)
       } catch {
         t = ''
       }
