@@ -88,3 +88,27 @@ test('段未揀醫生／單未分段 → 當嗰間 Lab 喺嗰間店全部醫生�
   assert.equal(tw.todo.filter(t => t.kind === 'MISSING').length, 0)
   assert.equal(tw.todo.filter(t => t.kind === 'OPEN').length, 2)
 })
+
+// ★ 2026-10-13：結轉等單
+import { carryWaiting, type CarrySourceIn } from './statement-progress'
+const SRC = (o: Partial<CarrySourceIn> = {}): CarrySourceIn => ({ amount: 440, labId: 'hc', clinicId: 'tkw', providerId: 'drA', docId: 'd9', sectionId: 's9', ...o })
+
+test('結轉等單：本月冇同範圍分段 → 列出；同範圍幾行加埋', () => {
+  const w = carryWaiting([SRC(), SRC({ amount: 60.5, sectionId: 's9b' }), SRC({ providerId: 'drB', amount: 100 })], new Set())
+  assert.equal(w.length, 2)
+  const a = w.find((x) => x.providerId === 'drA')!
+  assert.deepEqual([a.amount, a.count, a.sectionId], [500.5, 2, 's9'])
+})
+
+test('結轉等單：本月已有同 Lab＋診所＋醫生分段 → 唔列（已經／對數時帶入）', () => {
+  assert.equal(carryWaiting([SRC()], new Set(['hc|tkw|drA'])).length, 0)
+  // 同 Lab 同店但另一位醫生有單 → 照列（結轉只入同醫生）
+  assert.equal(carryWaiting([SRC()], new Set(['hc|tkw|drB'])).length, 1)
+})
+
+test('結轉等單：$0、冇 Lab／診所／醫生 → 唔列；負數（扣數）照計', () => {
+  assert.equal(carryWaiting([SRC({ amount: 0 }), SRC({ labId: null }), SRC({ clinicId: null }), SRC({ providerId: null })], new Set()).length, 0)
+  const w = carryWaiting([SRC({ amount: 440 }), SRC({ amount: -40 })], new Set())
+  assert.equal(w[0].amount, 400)
+  assert.equal(w[0].count, 2)
+})
