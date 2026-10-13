@@ -42,7 +42,7 @@ import { autoReconcileIfReady } from './statement-reconcile'
 import { buildPageKey, readEncrypted } from './storage'
 import { normPatientCode } from '../cost-entry/patient-code'
 import { loadPdfjs, pdfjsDocOptions } from './pdfjs'
-import { pdfItemsToText } from './pdf-text'
+import { pdfTableText, extractRulings, visibleTextItems, type Rulings, type PdfTextItem } from './pdf-text'
 
 /** §5.1：三次失敗先 EXTRACT_FAILED */
 export const LABDOC_MAX_ATTEMPTS = 3
@@ -100,7 +100,44 @@ interface PageRef {
   mime: string
 }
 
-async function extractPdfPageTexts(pdfBuf: Buffer): Promise<string[]> {
+/**
+ * ★ 2026-10-13：渲染一次頁面，剔走裁切走／隱藏嘅字（WPS 跨頁合併格喺兩頁都畫同一段字）。
+ * 渲染失敗 → 原樣返回（寧可多啲字，唔好漏）。
+ */
+async function dropInvisibleItems(page: any, items: PdfTextItem[]): Promise<PdfTextItem[]> {
+  try {
+    const { createCanvas } = await import(/* webpackIgnore: true */ '@napi-rs/canvas')
+    const vp = page.getViewport({ scale: 1.5 })
+    const W = Math.max(1, Math.floor(vp.width))
+    const H = Math.max(1, Math.floor(vp.height))
+    const canvas = createCanvas(W, H)
+    const ctx = canvas.getContext('2d')
+    ctx.fillStyle = '#ffffff'
+    ctx.fillRect(0, 0, W, H)
+    await page.render({ canvasContext: ctx, viewport: vp }).promise
+    const px = ctx.getImageData(0, 0, W, H).data
+    const sample = (x: number, y: number, w: number, h: number): [number, number] | null => {
+      const x0 = Math.max(0, Math.floor(x)), y0 = Math.max(0, Math.floor(y))
+      const x1 = Math.min(W, Math.ceil(x + w)), y1 = Math.min(H, Math.ceil(y + h))
+      if (x1 <= x0 || y1 <= y0) return null
+      let lo = 255, hi = 0
+      for (let yy = y0; yy < y1; yy++) {
+        for (let xx = x0; xx < x1; xx++) {
+          const i = (yy * W + xx) * 4
+          const l = (px[i] * 299 + px[i + 1] * 587 + px[i + 2] * 114) / 1000
+          if (l < lo) lo = l
+          if (l > hi) hi = l
+        }
+      }
+      return [hi, lo]
+    }
+    return visibleTextItems(items, (x, y) => vp.convertToViewportPoint(x, y) as [number, number], sample)
+  } catch {
+    return items
+  }
+}
+
+export async function extractPdfPageTexts(pdfBuf: Buffer): Promise<string[]> {
   const pdfjs = await loadPdfjs()
   const loadingTask = pdfjs.getDocument({ data: new Uint8Array(pdfBuf), useSystemFonts: true, ...pdfjsDocOptions() })
   const doc = await loadingTask.promise
@@ -111,8 +148,15 @@ async function extractPdfPageTexts(pdfBuf: Buffer): Promise<string[]> {
       let t = ''
       try {
         const tc = await page.getTextContent()
-        // ★ 2026-10-13：按位置砌返一行一行（之前 join('') 成頁黐埋一行 — 表格 PDF 讀唔到）
-        t = pdfItemsToText(tc.items)
+        // ★ 2026-10-13：按位置砌返一行一行（之前 join('') 成頁黐埋一行 — 表格 PDF 讀唔到）；
+        //   有表格格線就按格砌（合併格同組第一行同一行）；抽格線失敗 → 照 baseline 分行
+        let rulings: Rulings = { h: [], v: [] }
+        try {
+          rulings = extractRulings(await page.getOperatorList(), pdfjs.OPS)
+        } catch {
+          rulings = { h: [], v: [] }
+        }
+        t = pdfTableText(await dropInvisibleItems(page, tc.items), rulings)
       } catch {
         t = ''
       }
