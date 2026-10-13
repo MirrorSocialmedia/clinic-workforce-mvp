@@ -25,13 +25,17 @@ export interface ProgCostIn { clinicId: string; labId: string; providerId?: stri
 
 /** 卡片逐項：OPEN = 未對（段未確認／單未分段）；MISSING = 未收到（有成本冇月結單） */
 export interface ProgTodo {
-  kind: 'OPEN' | 'MISSING'
+  /** CARRY = 結轉等單（上月計入下個月，本月未有月結單可以帶入；route 加） */
+  kind: 'OPEN' | 'MISSING' | 'CARRY'
   labId: string | null
   providerId: string | null
   docId?: string
   sectionId?: string
   /** 段對數差額（月結單 − 成本）；未對數 = null */
   diff?: number | null
+  /** CARRY：結轉金額、行數 */
+  amount?: number
+  count?: number
 }
 
 export type ProgState = 'RECONCILED' | 'IN_PROGRESS' | 'OPEN'
@@ -114,4 +118,46 @@ export function statementProgress(statements: ProgStatementIn[], costs: ProgCost
 export function lastMonthOf(todayHK: string): string {
   const [y, m] = todayHK.slice(0, 7).split('-').map(Number)
   return m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, '0')}`
+}
+
+/**
+ * ★ 2026-10-13（用家：「選咗計去 10 月，但點 10 月冇」）：上個月標咗「計入下個月」嘅行，
+ *   要等本月有同 Lab＋診所＋醫生嘅有效月結單分段先會帶入（statement-carry.ts）。未帶入之前喺本月完全睇唔到 →
+ *   呢度計「結轉等單」：來源行嘅範圍喺本月冇分段 → 按 Lab＋診所＋醫生加埋列出（純函數、純讀）。
+ */
+export interface CarrySourceIn {
+  amount: number
+  labId: string | null
+  clinicId: string | null
+  providerId: string | null
+  docId: string
+  sectionId: string
+}
+export interface CarryWaiting {
+  clinicId: string
+  labId: string
+  providerId: string
+  amount: number
+  count: number
+  /** 撳去上個月嗰段（第一行嘅段） */
+  docId: string
+  sectionId: string
+}
+/** targetScopeKeys：本月有效月結單分段嘅 `${labId}|${clinicId}|${providerId}` */
+export function carryWaiting(sources: CarrySourceIn[], targetScopeKeys: Set<string>): CarryWaiting[] {
+  const out = new Map<string, CarryWaiting>()
+  for (const s of sources) {
+    if (!s.labId || !s.clinicId || !s.providerId) continue // 冇範圍嘅行唔會結轉
+    if (!(Math.abs(s.amount) > 0.001)) continue // $0 唔結轉（同 statement-carry 一致）
+    const key = `${s.labId}|${s.clinicId}|${s.providerId}`
+    if (targetScopeKeys.has(key)) continue // 本月已經有分段 → 已經（或者對數時）帶入
+    const w = out.get(key)
+    if (w) {
+      w.amount = Math.round((w.amount + s.amount) * 100) / 100
+      w.count++
+    } else {
+      out.set(key, { clinicId: s.clinicId, labId: s.labId, providerId: s.providerId, amount: Math.round(s.amount * 100) / 100, count: 1, docId: s.docId, sectionId: s.sectionId })
+    }
+  }
+  return [...out.values()]
 }
