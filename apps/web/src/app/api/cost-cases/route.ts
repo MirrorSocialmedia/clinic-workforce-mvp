@@ -8,6 +8,7 @@ import { deriveCostPeriod } from '@/lib/cost-entry/period-month'
 import { normPatientCode } from '@/lib/cost-entry/patient-code'
 import { CostGuardError, parseMoney, parseDay, checkCostDates, assertClinicAllowed, lockedRunFor, lockedMonthMessage } from '@/lib/cost-entry/guards'
 import { costStatementMarks, type StatementMark } from '@/lib/labdoc/cost-statement-marks'
+import { costStatementLinks } from '@/lib/labdoc/cost-statement-links'
 
 // ============================================================
 // GET /api/cost-cases — List cost cases
@@ -207,6 +208,17 @@ export async function GET(req: NextRequest) {
     labDocsByCase.set(l.costCaseId, arr)
   }
 
+  // ★ 2026-10-13：逐筆月結單核對（已確認分段配對到 → OK；改咗價 → CHANGED；範圍有確認但冇配到 → MISSING）— 只讀
+  const stmtLinks = await costStatementLinks(prisma, cases.map(c => ({
+    id: c.id,
+    labId: c.labId,
+    clinicId: c.clinicId,
+    providerId: c.providerId,
+    periodMonth: c.periodMonth,
+    finalCost: c.finalCost == null ? null : Number(c.finalCost),
+    status: c.status,
+  })))
+
   // Serialize Decimal fields for JSON
   const serializedCases = cases.map(c => ({
     ...c,
@@ -218,6 +230,7 @@ export async function GET(req: NextRequest) {
     // ★ cwm-labdoc P2 §13
     labInvoiceLinked: c.labInvoiceLinked ?? false,
     labDocs: labDocsByCase.get(c.id) ?? [],
+    statementLink: stmtLinks.get(c.id) ?? null,
     materials: c.materials.map(m => ({
       ...m,
       materialName: materialRowById.get(m.materialItemId)?.name ?? null,

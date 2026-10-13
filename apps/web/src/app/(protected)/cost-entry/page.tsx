@@ -49,6 +49,8 @@ interface CostCase {
   labInvoiceLinked?: boolean
   /** ★ cwm-labdoc §13：已配對（MATCHED 行）嘅 Lab invoice */
   labDocs?: Array<{ id: string; docNo: string | null; kind: string; status: string }>
+  /** ★ 2026-10-13：月結單逐筆核對（已確認分段）— OK 綠底＋「月」；CHANGED／MISSING 黃色提示 */
+  statementLink?: { state: 'OK' | 'CHANGED' | 'MISSING'; docId: string; sectionId: string; confirmedFinalCost: number | null } | null
 }
 
 interface CleanPatient {
@@ -1291,7 +1293,8 @@ export default function CostEntryPage() {
                 )
                 return (
                 // ★ 2026-10-11：同 Lab invoice 核對過嘅成本（有 MATCHED 行嘅 invoice）→ 淺綠底
-                <tr key={c.id} className={`border-b ${linkedInvoices(c).length > 0 ? 'bg-green-50 hover:bg-green-100' : 'hover:bg-gray-50'}`}>
+                // ★ 2026-10-13：月結單已確認、配對到而且價錢冇改 → 都係淺綠底
+                <tr key={c.id} className={`border-b ${linkedInvoices(c).length > 0 || c.statementLink?.state === 'OK' ? 'bg-green-50 hover:bg-green-100' : 'hover:bg-gray-50'}`}>
                   {dateMode === 'received' ? (<>{receivedTd}{orderedTd}</>) : orderedTd}
                   <td className="p-2 font-mono" style={vStyle}>{c.patientCode}</td>
                   {/* ★ 拍板①：全名必顯示 —— 剷走 truncate／max-w，改 whitespace-nowrap */}
@@ -1311,6 +1314,7 @@ export default function CostEntryPage() {
                       <a key={d.id} href={`/lab-docs/invoices/${d.id}`} title={`已連 Lab invoice ${d.docNo ?? ''}（唔套月度折扣）— 撳去睇`}
                         className="ml-1 px-1 rounded bg-blue-100 text-blue-700 text-[10px] font-medium hover:bg-blue-200 underline-offset-2 hover:underline">單</a>
                     ))}
+                    <StatementLinkTag link={c.statementLink} finalCost={c.finalCost} />
                   </td>
                   {/* ★ 2026-09-10 cwm-payrollui 拍板①：75px 窄化（th 同寬） */}
                   <td className="p-2 w-[75px] max-w-[75px]" style={vStyle}>
@@ -2059,6 +2063,26 @@ function StatementMarkPill({ mark }: {
   const m = meta[mark.status]
   return (
     <a href={`/lab-docs/statements/${mark.docId}`} title={m.title} className={`px-1.5 rounded text-[11px] font-medium whitespace-nowrap ${m.cls}`}>{m.text}</a>
+  )
+}
+
+// ★ 2026-10-13：逐筆月結單核對（API lib/labdoc/cost-statement-links.ts）— 撳落去開月結單嗰段
+function StatementLinkTag({ link, finalCost }: { link?: CostCase['statementLink']; finalCost: number | null }) {
+  if (!link) return null
+  const href = `/lab-docs/statements/${link.docId}/sections/${link.sectionId}`
+  const money = (n: number) => `$${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  if (link.state === 'OK') {
+    return <a href={href} title="月結單已確認、配對到呢筆 — 撳去睇" className="ml-1 px-1 rounded bg-violet-100 text-violet-700 text-[10px] font-medium hover:bg-violet-200 underline-offset-2 hover:underline">月</a>
+  }
+  const title = link.state === 'CHANGED'
+    ? (link.confirmedFinalCost != null && finalCost != null
+      ? `月結單確認時係 ${money(link.confirmedFinalCost)}，而家係 ${money(finalCost)} — 撳去月結單睇吓`
+      : '月結單確認之後，呢筆嘅 Lab／診所／醫生／月份改咗 — 撳去月結單睇吓')
+    : '呢個月嘅月結單已經確認，但冇一行配到呢筆 — 可能 Lab 漏咗收、或者入錯月份'
+  return (
+    <a href={href} title={title} className="ml-1 px-1 rounded bg-amber-100 text-amber-800 text-[10px] font-medium hover:bg-amber-200 whitespace-nowrap">
+      {link.state === 'MISSING' ? '月結冇呢筆' : link.confirmedFinalCost != null ? '核對後改咗價' : '核對後改咗資料'}
+    </a>
   )
 }
 
