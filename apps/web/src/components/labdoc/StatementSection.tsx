@@ -17,7 +17,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { ArrowLeft, Loader2, RefreshCw } from 'lucide-react'
 import { toast } from 'sonner'
-import { apiFetch } from '@/lib/api-client'
+import { apiFetch, type ApiError } from '@/lib/api-client'
 import { fmtMoney } from './status-meta'
 import { SECTION_STATUS, type StmtLine, type StmtResp } from './StatementDetail'
 import { combineSection } from './combine-action'
@@ -67,6 +67,8 @@ export default function StatementSection({ id, sid }: { id: string; sid: string 
   const [pairFrom, setPairFrom] = useState<string | null>(null)
   // $0 行預設摺埋
   const [showZero, setShowZero] = useState(false)
+  // ★ 2026-10-13：人手加一行
+  const [adding, setAdding] = useState(false)
 
   const load = useCallback(async () => {
     try {
@@ -260,7 +262,7 @@ export default function StatementSection({ id, sid }: { id: string; sid: string 
           </div>
           <div className="divide-y">
             {native.filter((l) => showZero || !isZeroLine(l)).map((l) => (
-              <LineRow key={l.id} docId={id} sid={sid} l={l} cost={lineToCost.has(l.id) ? costById.get(lineToCost.get(l.id)!) ?? null : null} editable={editable} onChanged={load} onPair={() => setPairFrom(l.id)} carryDup={false} month={data.document.statementMonth} />
+              <LineRow key={l.id} docId={id} sid={sid} l={l} cost={lineToCost.has(l.id) ? costById.get(lineToCost.get(l.id)!) ?? null : null} editable={editable} onChanged={load} onPair={() => setPairFrom(l.id)} carryDup={false} month={data.document.statementMonth} version={data.document.version} />
             ))}
             {zeroCount > 0 && (
               <button onClick={() => setShowZero((v) => !v)} className="w-full px-3 py-2 text-left text-xs text-brand bg-muted/40 flex justify-between">
@@ -269,6 +271,16 @@ export default function StatementSection({ id, sid }: { id: string; sid: string 
               </button>
             )}
             {native.length === 0 && <div className="p-3 text-sm text-muted-foreground">冇行</div>}
+            {/* ★ 2026-10-13：AI 讀漏 → 人手加一行 */}
+            {editable && (
+              <div className="px-3 py-2">
+                {adding ? (
+                  <LineForm docId={id} sid={sid} version={data.document.version} onCancel={() => setAdding(false)} onDone={() => { setAdding(false); load() }} />
+                ) : (
+                  <button onClick={() => setAdding(true)} className="text-xs text-brand underline">＋ 加一行（AI 讀漏）</button>
+                )}
+              </div>
+            )}
           </div>
           {otherMembers.map((mem) => {
             const ls = otherLines.filter((l) => l.sectionId === mem.sectionId && !l.carriedFromLineId)
@@ -365,7 +377,7 @@ export default function StatementSection({ id, sid }: { id: string; sid: string 
   )
 }
 
-function LineRow({ docId, sid, l, cost, editable, onChanged, onPair, carryDup, month }: {
+function LineRow({ docId, sid, l, cost, editable, onChanged, onPair, carryDup, month, version }: {
   docId: string
   sid: string
   l: StmtLine
@@ -377,8 +389,11 @@ function LineRow({ docId, sid, l, cost, editable, onChanged, onPair, carryDup, m
   carryDup: boolean
   /** 本月（'YYYY-MM'） */
   month: string | null
+  /** ★ 2026-10-13：文件 version — 有先可以人手改／刪（加埋一齊對嘅另一份要去嗰份改） */
+  version?: number
 }) {
   const [open, setOpen] = useState(false)
+  const [editing, setEditing] = useState(false)
   const [note, setNote] = useState('')
   const [busy, setBusy] = useState(false)
   const counted = COUNTED_TYPES.has(l.lineType) && l.result !== 'NOT_APPLICABLE' && !carryDup
@@ -426,6 +441,30 @@ function LineRow({ docId, sid, l, cost, editable, onChanged, onPair, carryDup, m
     }
   }
 
+  // ★ 2026-10-13：人手改／刪（AI 讀嘅行只可以改；人手加嘅行先可以刪）
+  const canEditLine = editable && version != null && !l.carriedFromLineId && l.resolution !== 'NEXT_MONTH' && l.resolution !== 'STATEMENT_WINS'
+  const removeLine = async () => {
+    if (!window.confirm(`刪走呢行人手加嘅 ${fmtMoney(l.amount)}？`)) return
+    setBusy(true)
+    try {
+      await apiFetch(`/api/lab-docs/${docId}/sections/${sid}/lines/${l.id}`, {
+        method: 'DELETE',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ version }),
+      })
+      toast.success('已刪，重新對咗數')
+      onChanged()
+    } catch (e) {
+      toast.error((e as Error).message)
+    } finally {
+      setBusy(false)
+    }
+  }
+  const ai = l.aiOriginal ?? null
+  const aiTitle = ai
+    ? `AI 原本讀到：${fmtMoney(ai.amount)}${ai.docNoRaw ? ` · 單號 ${ai.docNoRaw}` : ''}${ai.description ? ` · ${ai.description}` : ''}${l.manualNote ? `\n原因：${l.manualNote}` : ''}`
+    : l.manualNote ? `原因：${l.manualNote}` : undefined
+
   return (
     <div className={`p-3 text-sm ${!counted ? 'text-muted-foreground' : ''}`}>
       <div className="flex items-start gap-2">
@@ -440,8 +479,19 @@ function LineRow({ docId, sid, l, cost, editable, onChanged, onPair, carryDup, m
             {l.agingBucket && l.agingBucket !== 'CURRENT' ? ' · 舊欠' : ''}
           </div>
         </div>
-        <span className="tabular-nums">{fmtMoney(l.amount)}</span>
+        <span className="tabular-nums whitespace-nowrap">
+          {ai && Math.abs(ai.amount - l.amount) > 0.001 && <span className="line-through text-xs text-muted-foreground mr-1.5" title={aiTitle}>{fmtMoney(ai.amount)}</span>}
+          {fmtMoney(l.amount)}
+        </span>
       </div>
+      {l.manualSource && (
+        <div className="mt-0.5 text-[11px]">
+          <span className={`px-1.5 rounded ${l.manualSource === 'ADDED' ? 'bg-violet-50 text-violet-700' : 'bg-amber-50 text-amber-800'}`} title={aiTitle}>
+            {l.manualSource === 'ADDED' ? '人手加' : '人手改'}
+          </span>
+          {l.manualNote && <span className="ml-1.5 text-muted-foreground">{l.manualNote}</span>}
+        </div>
+      )}
       {l.carriedFromLineId && (
         <div className="mt-0.5 text-[11px] text-blue-700">由 {monthLabel(l.carriedFromMonth)}月結單帶過嚟</div>
       )}
@@ -464,7 +514,12 @@ function LineRow({ docId, sid, l, cost, editable, onChanged, onPair, carryDup, m
             ? <button className="underline" disabled={busy} onClick={() => mark('CLEAR')}>取消標記</button>
             : <button className="underline text-brand" onClick={() => setOpen(true)}>標記</button>
         )}
+        {canEditLine && !editing && !open && <button className="underline" disabled={busy} onClick={() => setEditing(true)}>改</button>}
+        {canEditLine && !editing && !open && l.manualSource === 'ADDED' && <button className="underline text-red-600" disabled={busy} onClick={removeLine}>刪</button>}
       </div>
+      {editing && version != null && (
+        <LineForm docId={docId} sid={sid} version={version} line={l} onCancel={() => setEditing(false)} onDone={() => { setEditing(false); onChanged() }} />
+      )}
       {open && (
         <div className="mt-2 rounded-lg bg-muted/40 p-2 space-y-2">
           {cost ? (
@@ -626,6 +681,78 @@ function ReadCheckNote({ stated, linesSum, lines }: { stated: number; linesSum: 
           ))}
         </div>
       )}
+    </div>
+  )
+}
+
+/**
+ * ★ 2026-10-13：人手改行／加行表格（用家拍板：金額必填，其他選填；單號重複會問）
+ * line 有值 = 改呢行（PATCH）；冇 = 加一行（POST）。
+ */
+function LineForm({ docId, sid, version, line, onDone, onCancel }: {
+  docId: string
+  sid: string
+  version: number
+  line?: StmtLine
+  onDone: () => void
+  onCancel: () => void
+}) {
+  const [amount, setAmount] = useState(line ? String(line.amount) : '')
+  const [docNo, setDocNo] = useState(line?.docNoRaw ?? '')
+  const [date, setDate] = useState(line?.date ? String(line.date).slice(0, 10) : '')
+  const [description, setDescription] = useState(line?.description ?? '')
+  const [patientCode, setPatientCode] = useState(line?.patientCode ?? '')
+  const [note, setNote] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  const save = async () => {
+    if (!amount.trim()) { toast.error('金額必填'); return }
+    const payload = (allowDuplicate: boolean) => JSON.stringify({
+      amount: amount.trim(),
+      docNo: docNo.trim() || null,
+      date: date || null,
+      description: description.trim() || null,
+      patientCode: patientCode.trim() || null,
+      note: note.trim() || null,
+      version,
+      allowDuplicate,
+    })
+    const url = line ? `/api/lab-docs/${docId}/sections/${sid}/lines/${line.id}` : `/api/lab-docs/${docId}/sections/${sid}/lines`
+    const send = (allowDuplicate: boolean) => apiFetch(url, { method: line ? 'PATCH' : 'POST', headers: { 'content-type': 'application/json' }, body: payload(allowDuplicate) })
+    setBusy(true)
+    try {
+      try {
+        await send(false)
+      } catch (e) {
+        const err = e as ApiError
+        if (err.body?.code !== 'DUPLICATE_DOCNO') throw e
+        if (!window.confirm(err.message)) return
+        await send(true)
+      }
+      toast.success(line ? '已改，重新對咗數' : '已加一行，重新對咗數')
+      onDone()
+    } catch (e) {
+      toast.error((e as Error).message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const input = 'w-full border rounded px-2 py-1 bg-card'
+  return (
+    <div className="mt-2 rounded-lg bg-muted/40 p-2 space-y-2 text-sm">
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+        <label className="space-y-0.5"><span className="text-xs text-muted-foreground">金額 *</span><input className={`${input} tabular-nums`} inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="例：4000" /></label>
+        <label className="space-y-0.5"><span className="text-xs text-muted-foreground">單號</span><input className={input} value={docNo} onChange={(e) => setDocNo(e.target.value)} maxLength={50} /></label>
+        <label className="space-y-0.5"><span className="text-xs text-muted-foreground">日期</span><input className={input} type="date" value={date} onChange={(e) => setDate(e.target.value)} /></label>
+        <label className="space-y-0.5 col-span-2 sm:col-span-1"><span className="text-xs text-muted-foreground">項目</span><input className={input} value={description} onChange={(e) => setDescription(e.target.value)} maxLength={200} /></label>
+        <label className="space-y-0.5"><span className="text-xs text-muted-foreground">病人編號（選填）</span><input className={input} value={patientCode} onChange={(e) => setPatientCode(e.target.value)} maxLength={30} /></label>
+        <label className="space-y-0.5"><span className="text-xs text-muted-foreground">原因（選填）</span><input className={input} value={note} onChange={(e) => setNote(e.target.value)} maxLength={200} placeholder={line ? '例：AI 讀錯金額' : '例：AI 讀漏第 2 頁'} /></label>
+      </div>
+      <div className="flex gap-2">
+        <button disabled={busy} onClick={save} className="px-3 py-1 rounded-lg bg-brand text-white">{busy ? '儲存中…' : line ? '儲存' : '＋ 加呢行'}</button>
+        <button disabled={busy} onClick={onCancel} className="px-3 py-1 rounded-lg border">取消</button>
+      </div>
     </div>
   )
 }

@@ -19,6 +19,7 @@ import { apiFetch } from '@/lib/api-client'
 import { hasPermission } from '@/lib/permissions'
 import { PENDING_CATEGORY_LABELS, type PendingCategory, type PendingItem } from '@/lib/labdoc/pending'
 import type { LabDocsMe } from './LabDocsTabs'
+import { retryLabDoc } from './retry-action'
 
 interface PendingData {
   categories: Array<{ key: PendingCategory; count: number; items: PendingItem[] }>
@@ -88,11 +89,11 @@ export default function PendingList({ me, clinicNames }: Props) {
     setBusyId(id)
     setMsg(null)
     try {
-      await apiFetch(`/api/lab-docs/${id}/retry`, { method: 'POST' })
-      setMsg('已送再讀（背景處理中）')
-      await load()
-    } catch (e: any) {
-      setMsg(`失敗：${e?.message ?? '未知錯誤'}`)
+      // ★ 2026-10-13：有人手改／加嘅行 → 先問用家（失敗會 toast）
+      if (await retryLabDoc(id)) {
+        setMsg('已送再讀（背景處理中）')
+        await load()
+      }
     } finally {
       setBusyId(null)
     }

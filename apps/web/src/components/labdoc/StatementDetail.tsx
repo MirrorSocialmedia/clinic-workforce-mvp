@@ -12,6 +12,7 @@
  */
 
 import { combineSection } from './combine-action'
+import { retryLabDoc } from './retry-action'
 import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
 import { ArrowLeft, ChevronRight, ImageIcon, Loader2, Pencil, RotateCcw } from 'lucide-react'
@@ -73,6 +74,12 @@ export interface StmtLine {
   /** 上月結轉副本（「計入下個月」帶過嚟） */
   carriedFromLineId?: string | null
   carriedFromMonth?: string | null
+  /** ★ 2026-10-13：人手改行／加行 — null = AI 讀；EDITED／ADDED */
+  manualSource?: 'EDITED' | 'ADDED' | null
+  /** 第一次人手改之前 AI 讀到嘅值 */
+  aiOriginal?: { amount: number; docNoRaw: string | null; date: string | null; description: string | null } | null
+  manualNote?: string | null
+  patientCode?: string | null
   system: {
     docId: string
     docNo: string | null
@@ -170,11 +177,11 @@ export default function StatementDetail({ id }: { id: string }) {
   const retry = async () => {
     setRetrying(true)
     try {
-      await apiFetch(`/api/lab-docs/${id}/retry`, { method: 'POST' })
-      toast.success('再讀緊…')
-      load()
-    } catch (e) {
-      toast.error((e as Error).message)
+      // ★ 2026-10-13：有人手改／加嘅行 → 先問用家（再讀會清走）
+      if (await retryLabDoc(id)) {
+        toast.success('再讀緊…')
+        load()
+      }
     } finally {
       setRetrying(false)
     }

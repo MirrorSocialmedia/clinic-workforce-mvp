@@ -301,6 +301,11 @@ export async function GET(
               pairCostCaseId: l.pairCostCaseId,
               carriedFromLineId: l.carriedFromLineId,
               carriedFromMonth: l.carriedFromMonth,
+              // ★ 2026-10-13：人手改行／加行
+              manualSource: l.manualSource ?? null,
+              aiOriginal: l.aiOriginal ?? null,
+              manualNote: l.manualNote ?? null,
+              manualAt: l.manualAt ?? null,
               system: systemView(l.matchedDocumentId, l.matchedLineId),
             })
             // ★ 2026-10-12：組（兩份加埋一齊對）

@@ -498,6 +498,11 @@ export const CONFIG = {
     'POST /api/lab-docs/:id/sections/:id/reconcile': ['OWNER', 'MANAGER'],
     'POST /api/lab-docs/:id/sections/:id/confirm': ['OWNER', 'MANAGER'],
     'POST /api/lab-docs/:id/sections/:id/lines/:id/resolve': ['OWNER', 'MANAGER'],
+    // ★ 2026-10-13：月結單人手加行／改行／刪人手加嘅行（＋check-rbac-matrix.sh 字面 dead key）
+    'POST /api/lab-docs/:id/sections/:id/lines': ['OWNER', 'MANAGER'],
+    'PATCH /api/lab-docs/:id/sections/:id/lines/:id': ['OWNER', 'MANAGER'],
+    'DELETE /api/lab-docs/:id/sections/:id/lines/:id': ['OWNER', 'MANAGER'],
+    'POST /api/lab-docs/:id/lines': ['OWNER', 'MANAGER'],
     'POST /api/lab-docs/:id/sections/:id/pair': ['OWNER', 'MANAGER'], // 2026-10-11 人手配對成本／未配對到
     'POST /api/lab-docs/:id/sections/:id/combine': ['OWNER', 'MANAGER'], // 2026-10-12 兩份月結單加埋一齊對
     'POST /api/lab-docs/:id/combine': ['OWNER', 'MANAGER'], // check-rbac-matrix.sh 字面 dead key
@@ -823,6 +828,9 @@ export const RBAC_PERM_OVERRIDES: Record<string, string[]> = {
   'POST /api/lab-docs/:id/sections/:id/reconcile': ['lab_statement'],
   'POST /api/lab-docs/:id/sections/:id/confirm': ['lab_statement'],
   'POST /api/lab-docs/:id/sections/:id/lines/:id/resolve': ['lab_statement'],
+  'POST /api/lab-docs/:id/sections/:id/lines': ['lab_statement'],
+  'PATCH /api/lab-docs/:id/sections/:id/lines/:id': ['lab_statement'],
+  'DELETE /api/lab-docs/:id/sections/:id/lines/:id': ['lab_statement'],
   'POST /api/lab-docs/:id/sections/:id/pair': ['lab_statement'],
   'POST /api/lab-docs/:id/sections/:id/combine': ['lab_statement'],
   'POST /api/lab-docs/:id/sections/:id/lines/:id/close-followup': ['lab_statement'],
