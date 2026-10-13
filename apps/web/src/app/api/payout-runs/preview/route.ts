@@ -8,6 +8,7 @@ import { costDetail, totalReminders } from '@/lib/payout/cost-detail'
 import { todayHK } from '@/lib/hk-date'
 import { spReview, spReviewNeeded } from '@/lib/payout/sp-review'
 import { dailyReview } from '@/lib/payout/daily-review'
+import { doctorReviewProgress } from '@/lib/payout/daily-doctor-review'
 import { payoutClinicGuard } from '@/lib/payout/kiosk-scope'
 
 export async function POST(req: NextRequest) {
@@ -61,6 +62,8 @@ export async function POST(req: NextRequest) {
     costReminders: totalReminders(detail),
     spReview: { ...sp, needsAck: spReviewNeeded(sp) },
     dailyReview: daily,
+    // ★ cwm-dailyreview2-20261014：核對同事逐日覆核進度（未核對晒要剔「我知道」先生成）
+    doctorCheck: await doctorReviewProgress(providerId, clinicId, periodMonth),
     warnings: [...warnings, ...payout.warnings, ...extra],
   })
 }

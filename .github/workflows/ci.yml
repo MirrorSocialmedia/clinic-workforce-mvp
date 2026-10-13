@@ -115,6 +115,7 @@ jobs:
           # 另：prisma/test-seed.mjs 硬編 5432（唔喺 test glob，CI 唔會跑 — 記此備忘）。
           # t623（S2-9 llm-proxy contract）經 CWM_TEST_DATABASE_URL 跑真 DB，自管數據行（零殘留 assert）。
           # cheque-print/manual-db（手動開票 CRUD＋併發）同樣經 CWM_TEST_DATABASE_URL 跑真 DB，e2emc- fixture 零殘留。
+          # payout/daily-doctor-review-db（核對同事覆核寫入＋併發）同樣經 CWM_TEST_DATABASE_URL 跑真 DB，e2edr- fixture 零殘留。
           # ⚠️ 新增 src/lib test 檔要手動補呢個 list。
           # src/lib/labdoc/** 全收（fake prisma，零環境依賴；2026-10-10 前漏咗冇入 CI）。
           TZ=UTC npx tsx --test \
@@ -173,6 +174,8 @@ jobs:
             src/lib/payout/adjustment-crud.test.ts \
             src/lib/payout/export-zip-names.test.ts \
             src/lib/payout/daily-check.test.ts \
+            src/lib/payout/daily-doctor-review-state.test.ts \
+            src/lib/payout/daily-doctor-review-db.test.ts \
             src/lib/payout/daily-cell-progress.test.ts \
             src/lib/payout/daily-cell-check.test.ts \
             src/lib/payout/daily-review.test.ts \

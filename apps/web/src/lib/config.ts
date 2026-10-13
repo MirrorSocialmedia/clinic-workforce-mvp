@@ -439,6 +439,8 @@ export const CONFIG = {
     'GET /api/payout-runs/daily/cell-check': ['OWNER', 'KIOSK'], // ★ cwm-dailyv2-20261007 ④: 逐格 tick；KIOSK 經 kioskClinicAllowed 只准自己店
     'POST /api/payout-runs/daily/cell-check': ['OWNER', 'KIOSK'], // ★ ④: 同上
     'POST /api/payout-runs/daily/check/revoke': ['OWNER'], // ★ ③: 撤銷只限老闆（KIOSK 唔加）
+    'GET /api/payout-runs/daily/doctor-review': ['OWNER', 'KIOSK'], // ★ cwm-dailyreview2-20261014：核對同事覆核（不設限：開到每日大數就剔得；KIOSK 只准自己店＋要揀同事名）
+    'POST /api/payout-runs/daily/doctor-review': ['OWNER', 'KIOSK'],
     'GET /api/payout-runs/:id/vendor-summary': ['OWNER'], // ★ 2026-08-26: 工廠總覽（跨醫生）
     'POST /api/payout-runs/clinics': ['OWNER'],
     'GET /api/payout-runs/stale-costs': ['OWNER'], // ★ cwm-costdetail-20261006: 成本異常（落單超過 2 個月未到貨）
@@ -773,6 +775,8 @@ export const RBAC_PERM_OVERRIDES: Record<string, string[]> = {
   'GET /api/payout-runs/daily/cell-check': ['provider_payout'], // ★ cwm-dailyv2-20261007 ④（同 check 同一套）
   'POST /api/payout-runs/daily/cell-check': ['provider_payout'], // ★ ④
   'POST /api/payout-runs/daily/check/revoke': ['provider_payout'],
+  'GET /api/payout-runs/daily/doctor-review': ['provider_payout'], // ★ cwm-dailyreview2-20261014
+  'POST /api/payout-runs/daily/doctor-review': ['provider_payout'],
   'GET /api/payout-runs/:id/vendor-summary': ['provider_payout'], // ★ 2026-08-26: 工廠總覽（同月結單同一權限，MD §3.3）
   'POST /api/payout-runs/clinics': ['provider_payout'],
   'GET /api/payout-runs/stale-costs': ['provider_payout'], // ★ cwm-costdetail-20261006（同月結頁同一權限）

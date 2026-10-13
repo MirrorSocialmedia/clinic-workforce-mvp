@@ -10,6 +10,7 @@ import { runGates, computePayout, lockPayoutRun, CostChangedDuringLockError } fr
 import { costDetail, totalReminders } from '@/lib/payout/cost-detail'
 import { spReview, spReviewNeeded } from '@/lib/payout/sp-review'
 import { dailyReview } from '@/lib/payout/daily-review'
+import { doctorReviewProgress } from '@/lib/payout/daily-doctor-review'
 import { todayHK } from '@/lib/hk-date'
 import { payoutClinicGuard, payoutClinicWhere } from '@/lib/payout/kiosk-scope'
 
@@ -136,6 +137,15 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // ★ cwm-dailyreview2-20261014：核對同事未核對晒（或者核對後有變）→ 要剔「我知道」先生成；剔咗就記低邊個（鎖定後寫審計）
+  const doctorCheck = await doctorReviewProgress(providerId, clinicId, periodMonth)
+  if (doctorCheck.needsAck && body.doctorReviewAck !== true) {
+    return NextResponse.json({
+      error: `每日收款（核對同事）仲有 ${doctorCheck.pendingDates.length} 日未核對、${doctorCheck.changed} 日核對後有變，請先預覽，剔「我知道」再生成`,
+      code: 'DOCTOR_REVIEW_REQUIRED',
+    }, { status: 409 })
+  }
+
   // Compute payout
   let payout: any
   try {
@@ -153,6 +163,13 @@ export async function POST(req: NextRequest) {
       payout,
       auth.session!.userId,
       clinicId,
+      doctorCheck.needsAck ? {
+        action: 'PAYOUT_DOCTOR_REVIEW_ACK',
+        notes: `${periodMonth} 每日收款核對同事 ${doctorCheck.ok}/${doctorCheck.total} 日已核對，照樣生成`
+          + (doctorCheck.pendingDates.length ? `；未核對：${doctorCheck.pendingDates.join('、')}` : '')
+          + (doctorCheck.changedDates.length ? `；有變：${doctorCheck.changedDates.join('、')}` : ''),
+        afterJson: JSON.stringify(doctorCheck),
+      } : undefined,
     )
   } catch (e) {
     // ★ cwm-costguard-20261006：鎖定期間成本有改動 → transaction 已回滾
