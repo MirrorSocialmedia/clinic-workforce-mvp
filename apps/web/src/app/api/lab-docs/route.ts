@@ -1,5 +1,5 @@
 // ★ cwm-labdoc P1：GET /api/lab-docs — 列表／檔案庫（§4.3、§11）
-// filters：kind、status（csv）、labId、clinicId、providerId、month、q、ids（csv）、page、hideVoid、notReconciled、excludeProcessing
+// filters：kind、status（csv）、labId、clinicId、providerId、month、q、ids（csv）、page、hideVoid、notReconciled、excludeProcessing、noMonth
 // ★ 2026-10-11：hideVoid=1 → 唔列已作廢（到貨單／月結單分頁預設）；月結單 clinicId 篩分段診所；
 //   月結單每項帶 sectionSummary（診所／醫生／總數／確認進度由分段計 — statement-list.ts）；uploadedByName
 // → { items: [{document, labName, firstPageThumb, pageCount, uploadedByName}], total, page, pageSize }
@@ -64,6 +64,11 @@ export async function GET(req: NextRequest) {
     if (kind === 'STATEMENT') and.push({ OR: [{ clinicId }, { sections: { some: { clinicId } } }, { clinicId: null, uploadClinicId: clinicId, sections: { none: { clinicId: { not: null } } } }] })
     else and.push({ clinicId })
   }
+  // ★ 2026-10-13：讀唔到月份嘅月結單（要人手揀）— noMonth=1 只攞呢啲（列表頂「處理中」用）；
+  //   excludeProcessing=1 時主列表唔再列（唔會兩度出現）
+  const NEEDS_MONTH = { statementMonth: null, status: { in: ['NEEDS_REVIEW', 'IN_PROGRESS'] } }
+  if (kind === 'STATEMENT' && sp.get('noMonth') === '1') where.statementMonth = null
+  if (kind === 'STATEMENT' && sp.get('excludeProcessing') === '1') and.push({ NOT: NEEDS_MONTH })
   if (and.length) where.AND = and
   if (providerId) where.providerId = providerId
   if (month && /^\d{4}-\d{2}$/.test(month)) {

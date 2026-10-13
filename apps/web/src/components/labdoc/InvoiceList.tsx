@@ -24,6 +24,7 @@ import { apiFetch } from '@/lib/api-client'
 import { fmtMoney, hkDate, hkDateTime, statusMeta } from './status-meta'
 import LabDocViewer from './LabDocViewer'
 import StatementProgressCards from './StatementProgressCards'
+import StatementMonthPick, { needsStatementMonth } from './StatementMonthPick'
 import { todayHK } from '@/lib/hk-date'
 import { lastMonthOf } from '@/lib/labdoc/statement-progress'
 
@@ -47,6 +48,8 @@ export interface ListDoc {
   uploadedByName: string | null
   uploadedAt: string
   duplicateOfId: string | null
+  version: number
+  supersededById?: string | null
   /** 排隊中（UPLOADED）第幾位 */
   queuePosition?: number | null
   sectionSummary?: {
@@ -185,6 +188,11 @@ export default function InvoiceList({ clinicNames, providerNames, kind = 'INVOIC
   const loadProcessing = useCallback(async () => {
     try {
       const data = await apiFetch<ListResp>(`/api/lab-docs?kind=${kind}&status=UPLOADED,EXTRACTING,EXTRACT_FAILED`)
+      // ★ 2026-10-13：月結單讀唔到月份 → 都放喺度（月份篩選會篩走佢哋）
+      if (kind === 'STATEMENT') {
+        const nm = await apiFetch<ListResp>(`/api/lab-docs?kind=STATEMENT&noMonth=1&status=NEEDS_REVIEW,IN_PROGRESS`)
+        data.items = [...data.items, ...nm.items]
+      }
       const ids = data.items.map((d) => d.id)
       // 有單讀完（由「處理中」走咗）→ 主列表＋卡片要更新
       if (prevProcIds.current.some((id) => !ids.includes(id))) setReloadTick((x) => x + 1)
@@ -384,10 +392,21 @@ export default function InvoiceList({ clinicNames, providerNames, kind = 'INVOIC
       {/* ★ 2026-10-11：處理中（排隊／讀緊／讀唔到）— 唔受篩選 */}
       {processing.length > 0 && (
         <div className="rounded-xl border bg-card overflow-hidden">
-          <div className="px-3 py-2 text-xs font-medium text-blue-700 bg-blue-50">處理中（{processing.length}）</div>
+          <div className="px-3 py-2 text-xs font-medium text-blue-700 bg-blue-50">處理中／要補資料（{processing.length}）</div>
           {processing.map((d) => {
             const sm = queueMeta(d)
             const failed = d.status === 'EXTRACT_FAILED'
+            if (needsStatementMonth(d)) {
+              return (
+                <div key={d.id} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 border-t text-sm">
+                  <button onClick={() => open(d.id)} className="min-w-0 text-left hover:underline">
+                    <span className="truncate block">月結單 · {d.labName ?? d.labNameRaw ?? 'Lab 未識別'}（{d.pageCount} 頁）</span>
+                    <span className="block text-xs text-muted-foreground">上傳 {hkDateTime(d.uploadedAt)}{d.uploadedByName ? ` · ${d.uploadedByName}` : ''}</span>
+                  </button>
+                  <StatementMonthPick docId={d.id} version={d.version} onDone={() => { loadProcessing(); setReloadTick((x) => x + 1) }} />
+                </div>
+              )
+            }
             return (
               <button key={d.id} onClick={() => open(d.id)} className="w-full flex items-center justify-between gap-2 px-3 py-2 border-t text-sm text-left hover:bg-accent/50">
                 <span className="min-w-0">

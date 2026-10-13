@@ -17,6 +17,7 @@ import { toast } from 'sonner'
 import { apiFetch } from '@/lib/api-client'
 import { DOC_STATUS_META, fmtMoney, hkDate, hkDateTime, kindLabel, statusMeta } from './status-meta'
 import type { ListDoc } from './InvoiceList'
+import StatementMonthPick, { needsStatementMonth } from './StatementMonthPick'
 import LabDocViewer from './LabDocViewer'
 
 interface ListResp {
@@ -200,8 +201,8 @@ export default function ArchiveList({ clinicNames, providerNames }: {
           items.map((d) => {
             const sm = statusMeta(d.status)
             return (
+              <div key={d.id} className="space-y-1">
               <button
-                key={d.id}
                 onClick={() => setViewDoc({ id: d.id, name: d.uploadedByName ?? undefined })}
                 className={`w-full text-left rounded-xl border bg-card p-3 flex gap-3 active:bg-accent ${sm.dimmed ? 'opacity-60' : ''}`}
               >
@@ -228,6 +229,12 @@ export default function ArchiveList({ clinicNames, providerNames }: {
                   </div>
                 </div>
               </button>
+              {needsStatementMonth(d) && (
+                <div className="px-3">
+                  <StatementMonthPick docId={d.id} version={d.version} onDone={() => load(page)} />
+                </div>
+              )}
+              </div>
             )
           })
         )}
@@ -281,7 +288,10 @@ export default function ArchiveList({ clinicNames, providerNames }: {
                     <td className="px-3 py-2 whitespace-nowrap">{d.clinicId ? clinicNames[d.clinicId] ?? '未識別' : '未識別'}</td>
                     <td className="px-3 py-2 whitespace-nowrap">{d.providerId ? providerNames[d.providerId] ?? '未識別' : '未識別'}</td>
                     <td className="px-3 py-2 font-medium whitespace-nowrap">{d.docNo ?? '未識別'}</td>
-                    <td className="px-3 py-2 whitespace-nowrap">{rowDate(d)}</td>
+                    <td className="px-3 py-2 whitespace-nowrap">
+                      {/* ★ 2026-10-13：讀唔到月份 → 喺度揀（之前月結單列表有月份篩選，呢啲單冇入口） */}
+                      {needsStatementMonth(d) ? <StatementMonthPick docId={d.id} version={d.version} onDone={() => load(page)} /> : rowDate(d)}
+                    </td>
                     <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">{fmtMoney(d.total)}</td>
                     <td className="px-3 py-2">
                       <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${sm.cls}`}>{sm.label}</span>
