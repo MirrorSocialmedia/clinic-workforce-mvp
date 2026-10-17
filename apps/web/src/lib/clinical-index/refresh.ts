@@ -114,7 +114,7 @@ export type RefreshResult =
 
 /**
  * 單一病人即時刷新（正好三 call：appointments → notes → bills overview，順序執行；補 N 日都係三 call）。
- * 目標日 = 最新 past appointment 日（≤ today）；無 appointment → fallback
+ * 目標日 = 最新到診日（≤ today；已到診預約／診症記錄／帳單 — walk-in 都算）；都冇 → fallback
  * 索引行（≤ today 最新）；都冇 → NOT_FOUND（route 回 404）。
  * Apricot 限速/認證/未配置 → throw ApricotUnavailableError（route 回 503）。
  */
@@ -147,16 +147,36 @@ async function refreshPatientIndexImpl(
     throw e
   }
 
-  // 目標日：最新 past appointment（≤ today）
+  // Call 2+3：notes + bills（先攞齊先揀日 — walk-in 冇預約，到診日要由診症記錄／帳單補）
+  // ★ cwi-patient-records-20261017：bills 改用 overview（一次攞晒全部日子）；overview 失敗（非限速／認證）
+  //   → 退返舊 bills/search 逐日（allBills = null）
+  let notes: any[]
+  let allBills: any[] | null = null
+  try {
+    notes = await getPatientNotes(call, cpId)
+    try {
+      allBills = await getPatientBillsOverview(call, cpId)
+    } catch (e) {
+      if (isStopNightError(e)) throw e
+      console.warn('[clinical-index-refresh] bills overview 失敗 → 退返逐日 bills/search:', (e as Error)?.message)
+    }
+  } catch (e) {
+    if (isStopNightError(e)) throw new ApricotUnavailableError((e as Error).message)
+    throw e
+  }
+
+  // 到診日（≤ today）= 已到診預約 ∪ 診症記錄 ∪ 非作廢帳單（★ cwi-walkin-20261018：walk-in 都算到診）
   // ★ cwi-patient-records-20261017：depth > 1 → 連帶補最近 N 個到診日（新認到嘅病人索引係空 — 一次補返歷史）
   const pastDays = new Set<string>()
-  for (const a of appointments) {
-    const t = a?.conTime ?? a?.checkInTime
+  const addDay = (t: unknown) => {
     if (typeof t === 'string' && t.length >= 10) {
       const day = toHKDateStr(t)
       if (day <= today) pastDays.add(day)
     }
   }
+  for (const a of appointments) addDay(a?.conTime ?? a?.checkInTime)
+  for (const n of notes) addDay(n?.conTime)
+  for (const b of allBills ?? []) if (b && !b.isVoid) addDay(b.billTime)
   const sortedPastDays = [...pastDays].sort().reverse()
   let targetDay: string | null = sortedPastDays[0] ?? null
   const depth = Math.min(Math.max(1, Math.floor(opts.depth ?? 1) || 1), REFRESH_MAX_DEPTH)
@@ -173,33 +193,22 @@ async function refreshPatientIndexImpl(
     targetDay = toHKDateStr(row.visitDate)
   }
 
-  // Call 2+3：notes + bills
-  // ★ cwi-patient-records-20261017：bills 改用 overview（一次攞晒全部日子）；overview 失敗（非限速／認證）
-  //   → 退返舊 bills/search 逐日（allBills = null）
-  let notes: any[]
-  let allBills: any[] | null = null
   let bills: any[]
   try {
-    notes = await getPatientNotes(call, cpId)
-    try {
-      allBills = await getPatientBillsOverview(call, cpId)
-    } catch (e) {
-      if (isStopNightError(e)) throw e
-      console.warn('[clinical-index-refresh] bills overview 失敗 → 退返逐日 bills/search:', (e as Error)?.message)
-    }
     bills = allBills ? billsForDay(allBills, targetDay) : await getPatientBills(call, cpId, targetDay)
   } catch (e) {
     if (isStopNightError(e)) throw new ApricotUnavailableError((e as Error).message)
     throw e
   }
 
-  // 病人主檔欄：appointment 行帶 clinicPatient（PII 只用於 hash/代號，唔回傳）
-  const cp = appointments[0]?.clinicPatient ?? {}
+  // 病人主檔欄：appointment／note／bill 行都帶 clinicPatient（PII 只用於 hash/代號，唔回傳）—
+  //   walk-in 病人可能冇預約 → 由 note／bill 攞
+  const cp = appointments[0]?.clinicPatient ?? notes[0]?.clinicPatient ?? allBills?.[0]?.clinicPatient ?? {}
   const patient = {
     cpId,
     code: cp.code,
     phoneNum: cp.phoneNum,
-    registrationClinic: appointments[0]?.clinicId ?? cp.registrationClinic,
+    registrationClinic: appointments[0]?.clinicId ?? notes[0]?.clinicId ?? cp.registrationClinic,
   }
 
   const v = resolvePatientDay({ patient, appointments, notes, bills, day: targetDay, clinicMap, phoneKey, rxCodeEntries })

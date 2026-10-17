@@ -9,7 +9,7 @@
  */
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { extractNoteText, firstLineOf } from './extract-note-text'
+import { extractNoteText, firstLineOf, extractRxLines } from './extract-note-text'
 import type { NoteTemplate } from './types'
 
 describe('extractNoteText — MD §0.3', () => {
@@ -114,5 +114,27 @@ describe('firstLineOf — 列表 API ≤60 字', () => {
   it('null / 空 → null', () => {
     assert.equal(firstLineOf(null), null)
     assert.equal(firstLineOf({ kind: 'STANDARD', complaints: '', findings: '', diagnosis: '', actions: '' }), '')
+  })
+})
+
+describe('extractRxLines — 處方（cwi-walkin-20261018）', () => {
+  it('空／非陣列 → []；STANDARD 冇處方唔加 rx 欄（舊快照不變）', () => {
+    assert.deepEqual(extractRxLines(undefined), [])
+    assert.deepEqual(extractRxLines([]), [])
+    const n = extractNoteText({ complaints: 'a', findings: '', diagnosis: '', actions: '', prescriptions: [] })
+    assert.equal('rx' in n, false)
+  })
+
+  it('字典物件（drug{des}）+ 用法 → 藥名 + 摘要；冇藥名行跳過', () => {
+    const rx = extractRxLines([
+      { drug: { des: 'Amoxicillin 500mg', code: 'AMOX500' }, dosage: '1 cap', frequency: { des: 'TDS' }, duration: 5, durationUnit: { des: '日' }, qty: 15, unit: { des: 'cap' } },
+      { qty: 3 },
+    ])
+    assert.deepEqual(rx, [{ name: 'Amoxicillin 500mg', detail: '1 cap · TDS · 5日 · 共 15 cap' }])
+  })
+
+  it('有處方 → note.rx（STANDARD／TEMPLATE 都帶）', () => {
+    const n = extractNoteText({ complaints: 'a', findings: '', diagnosis: '', actions: '', prescriptions: [{ drugName: 'Panadol' }] })
+    assert.deepEqual(n.rx, [{ name: 'Panadol', detail: '' }])
   })
 })

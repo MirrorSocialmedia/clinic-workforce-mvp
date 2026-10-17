@@ -6,7 +6,7 @@
  */
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { resolvePatientDay } from './visit-index'
+import { resolvePatientDay, WALK_IN_BOOKING_STATUS } from './visit-index'
 import { phoneHashes } from '@/lib/phone'
 
 const KEY = 'unit-phone-key-cwi-p1-0123456789'
@@ -76,7 +76,7 @@ describe('resolvePatientDay', () => {
     assert.equal(v.billTtlAmt, null) // 無 bill → null（唔係 0）
   })
 
-  it('該日無 appointment → null（walk-in 無錨點 — P1 唔索引）', () => {
+  it('該日乜都冇（冇預約、冇診症記錄、冇帳單）→ null', () => {
     const v = resolvePatientDay({
       patient,
       appointments: [{ ...apptStd, conTime: '2026-09-10T02:00:00.000Z' }],
@@ -145,5 +145,74 @@ describe('resolvePatientDay', () => {
     assert.ok(v)
     assert.equal(v.hasNote, false)
     assert.equal(v.apricotNoteId, null)
+  })
+
+  // ★ cwi-walkin-20261018：walk-in 都算到診（擁有人拍板）
+  it('walk-in：冇預約、有冇掛預約嘅診症記錄（實測樣本形狀）→ 到診行（bookingStatus 4、note 照入）', () => {
+    const v = resolvePatientDay({
+      patient,
+      appointments: [],
+      notes: [{
+        id: 'note-walk', bookingId: '', clinicId: 'apr-tkw-001', conTime: '2026-10-08T07:59:17.911Z',
+        practitioner: { code: 'TSE' }, complaints: 'sp\ntca:sp', findings: '', diagnosis: '', actions: '', prescriptions: [],
+      }],
+      bills: [],
+      day: '2026-10-08',
+      clinicMap,
+      phoneKey: KEY,
+    })
+    assert.ok(v)
+    assert.equal(v.clinicId, 'clinic-tkw-id')
+    assert.equal(v.apricotApptId, null)
+    assert.equal(v.apricotNoteId, 'note-walk')
+    assert.equal(v.bookingStatus, WALK_IN_BOOKING_STATUS)
+    assert.equal(v.providerCode, 'TSE')
+    assert.equal(v.hasNote, true)
+    assert.deepEqual(v.noteJson, { kind: 'STANDARD', complaints: 'sp\ntca:sp', findings: '', diagnosis: '', actions: '' })
+  })
+
+  it('walk-in：只有帳單（billTime 香港日）→ 到診行 + 帳單合計；作廢單唔算錨點', () => {
+    const base = { patient, appointments: [], notes: [], day: '2025-12-20', clinicMap, phoneKey: KEY }
+    const v = resolvePatientDay({ ...base, bills: [{ id: 'b', isVoid: false, ttlAmt: 300, osAmt: 0, billTime: '2025-12-19T16:00:00Z', clinic: { id: 'apr-tkw-001' } }] })
+    assert.ok(v)
+    assert.equal(v.clinicId, 'clinic-tkw-id')
+    assert.equal(v.billTtlAmt, 300)
+    assert.equal(v.hasNote, false)
+    const voidOnly = resolvePatientDay({ ...base, bills: [{ id: 'b', isVoid: true, ttlAmt: 0, osAmt: 0, billTime: '2025-12-19T16:00:00Z', clinic: { id: 'apr-tkw-001' } }] })
+    assert.equal(voidOnly, null)
+  })
+
+  it('預約冇掛 note → 用同日冇掛預約嘅 note；掛咗其他預約嘅 note 唔濫配', () => {
+    const v = resolvePatientDay({
+      patient,
+      appointments: [apptStd],
+      notes: [
+        { id: 'note-other', bookingId: 'apt-OTHER', conTime: '2026-09-14T03:00:00.000Z', complaints: 'x', findings: '', diagnosis: '', actions: '' },
+        { id: 'note-same-day', bookingId: '', conTime: '2026-09-14T03:00:00.000Z', complaints: '洗牙', findings: '', diagnosis: '', actions: '' },
+      ],
+      bills: [],
+      day: '2026-09-14',
+      clinicMap,
+      phoneKey: KEY,
+    })
+    assert.ok(v)
+    assert.equal(v.apricotApptId, 'apt-1')
+    assert.equal(v.apricotNoteId, 'note-same-day')
+  })
+
+  it('overview 帳單（全部日子）只計當日', () => {
+    const v = resolvePatientDay({
+      patient,
+      appointments: [apptStd],
+      notes: [],
+      bills: [
+        { id: 'today', isVoid: false, ttlAmt: 100, osAmt: 0, billTime: '2026-09-14T03:00:00.000Z' },
+        { id: 'other-day', isVoid: false, ttlAmt: 999, osAmt: 999, billTime: '2026-08-01T03:00:00.000Z' },
+      ],
+      day: '2026-09-14',
+      clinicMap,
+      phoneKey: KEY,
+    })
+    assert.equal(v?.billTtlAmt, 100)
   })
 })

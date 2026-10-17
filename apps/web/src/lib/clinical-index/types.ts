@@ -34,7 +34,13 @@ export type NoteTemplate = {
   blocks: NoteTemplateBlock[]
 }
 
-export type NoteText = NoteStandard | NoteTemplate
+/** 處方一行（cwi-walkin-20261018：note.prescriptions[] 抽 — 藥名 + 用法摘要；零病人資料）。 */
+export type NoteRxLine = {
+  name: string
+  detail: string
+}
+
+export type NoteText = (NoteStandard | NoteTemplate) & { rx?: NoteRxLine[] }
 
 /** upsertVisitIndex 入參（夜跑／回填／手動刷新三條路徑共用）。 */
 export interface ResolvedVisit {
