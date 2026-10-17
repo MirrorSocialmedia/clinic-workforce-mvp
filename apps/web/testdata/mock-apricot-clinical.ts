@@ -247,6 +247,10 @@ export function buildClinicalMock(opts: MockOpts): ClinicalMock {
       return (BILLS[cpId] ?? []).filter((b) => b.billTime >= start && b.billTime <= end)
     }
 
+    // 5) bills/payer/{cpId}/overview（病人全部帳單，唔分日 — 立即更新用）
+    const ovM = /\/services\/aepsmsbill\/api\/bills\/payer\/([^/?]+)\/overview/.exec(path)
+    if (ovM) return BILLS[ovM[1]] ?? []
+
     throw new Error(`MOCK_UNEXPECTED_PATH: ${path}`)
   }
 
