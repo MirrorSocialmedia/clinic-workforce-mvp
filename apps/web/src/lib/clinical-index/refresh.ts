@@ -96,6 +96,9 @@ export class ApricotUnavailableError extends Error {
   }
 }
 
+/** ★ cwi-patient-records-20261017：一次 refresh 最多補幾多個到診日（每日 1 call，限速 400ms） */
+export const REFRESH_MAX_DEPTH = 12
+
 export type RefreshResult =
   | {
       ok: true
@@ -115,14 +118,14 @@ export type RefreshResult =
 /** ★ cwm-apricotty-20261001：用病人所屬 Apricot 帳號（青衣病人 → TY token） */
 export async function refreshPatientIndex(
   cpId: string,
-  opts: { callFn?: ClinicalCallFn; now?: Date } = {},
+  opts: { callFn?: ClinicalCallFn; now?: Date; depth?: number } = {},
 ): Promise<RefreshResult> {
   return withApricotAccount(await accountForPatient(cpId), () => refreshPatientIndexImpl(cpId, opts))
 }
 
 async function refreshPatientIndexImpl(
   cpId: string,
-  opts: { callFn?: ClinicalCallFn; now?: Date } = {},
+  opts: { callFn?: ClinicalCallFn; now?: Date; depth?: number } = {},
 ): Promise<RefreshResult> {
   const now = opts.now ?? new Date()
   resetLlmStats() // ★ cwi-final S0-9：job 開頭重置 — 完結 log 反映本 job LLM 產出
@@ -142,14 +145,19 @@ async function refreshPatientIndexImpl(
   }
 
   // 目標日：最新 past appointment（≤ today）
-  let targetDay: string | null = null
+  // ★ cwi-patient-records-20261017：depth > 1 → 連帶補最近 N 個到診日（新認到嘅病人索引係空 — 一次補返歷史）
+  const pastDays = new Set<string>()
   for (const a of appointments) {
     const t = a?.conTime ?? a?.checkInTime
     if (typeof t === 'string' && t.length >= 10) {
       const day = toHKDateStr(t)
-      if (day <= today && (!targetDay || day > targetDay)) targetDay = day
+      if (day <= today) pastDays.add(day)
     }
   }
+  const sortedPastDays = [...pastDays].sort().reverse()
+  let targetDay: string | null = sortedPastDays[0] ?? null
+  const depth = Math.min(Math.max(1, Math.floor(opts.depth ?? 1) || 1), REFRESH_MAX_DEPTH)
+  const extraDays = sortedPastDays.slice(1, depth)
 
   // fallback：索引行（≤ today 最新）— 病人係經 phoneHash 匹配搵到嘅，正常必有行
   if (!targetDay) {
@@ -185,6 +193,23 @@ async function refreshPatientIndexImpl(
   const v = resolvePatientDay({ patient, appointments, notes, bills, day: targetDay, clinicMap, phoneKey, rxCodeEntries })
   if (v) await upsertVisitIndex(v)
 
+  // ★ cwi-patient-records-20261017：補更早嘅到診日（每日 1 call bills；notes 已經全部攞咗）—
+  //   限速／認證錯 → 停（已補嘅保留，唔令成次 refresh 失敗）；其他錯 → 跳過嗰日。報價抽取只做最新一日。
+  let extraIndexed = 0
+  for (const day of extraDays) {
+    try {
+      const dayBills = await getPatientBills(call, cpId, day)
+      const ev = resolvePatientDay({ patient, appointments, notes, bills: dayBills, day, clinicMap, phoneKey, rxCodeEntries })
+      if (ev) {
+        await upsertVisitIndex(ev)
+        extraIndexed++
+      }
+    } catch (e) {
+      if (isStopNightError(e)) break
+      console.warn('[clinical-index-refresh] 補舊到診日失敗（跳過）:', (e as Error)?.message)
+    }
+  }
+
   const row = await basePrisma.clinicalRecordIndex.findFirst({
     where: {
       patientApricotId: cpId,
@@ -211,7 +236,7 @@ async function refreshPatientIndexImpl(
     ok: true,
     visitDate: targetDay,
     syncedAt: row?.syncedAt?.toISOString() ?? now.toISOString(),
-    visits: row ? 1 : 0,
+    visits: (row ? 1 : 0) + extraIndexed,
     balance: { ttlAmt: row?.billTtlAmt ?? null, osAmt: row?.billOsAmt ?? null },
   }
 }

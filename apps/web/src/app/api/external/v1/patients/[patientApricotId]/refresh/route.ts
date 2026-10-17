@@ -60,7 +60,9 @@ export async function POST(
     try {
       // e2e/dev hook：in-process 決定性 stub（生產 getTestCallFn()=null → 真 apricotCall）
       const hook = getTestCallFn()
-      outcome = await refreshPatientIndex(cpId, hook ? { callFn: hook } : {})
+      // ★ cwi-patient-records-20261017：?depth=N（1–12）連帶補最近 N 個到診日（新認到嘅病人一次補返歷史）
+      const depth = Number(new URL(req.url).searchParams.get('depth') ?? '1') || 1
+      outcome = await refreshPatientIndex(cpId, { ...(hook ? { callFn: hook } : {}), depth })
     } catch (e) {
       if (e instanceof ApricotUnavailableError) {
         // 保護 4：唔扮成功 — 503 + lastSyncedAt（UI 顯示「Apricot 未接通，顯示緊 {日期} 嘅資料」）
