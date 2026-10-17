@@ -38,6 +38,8 @@ export type NoteTemplate = {
 export type NoteRxLine = {
   name: string
   detail: string
+  /** 用藥注意（drugCautions — 例如「抗生素必須服完整個療程」） */
+  caution?: string
 }
 
 export type NoteText = (NoteStandard | NoteTemplate) & { rx?: NoteRxLine[] }

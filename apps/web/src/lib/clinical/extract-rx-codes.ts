@@ -36,7 +36,8 @@ export function noteTextToPlain(note: NoteText | null | undefined): string {
  */
 export function extractRxCodes(note: NoteText | null | undefined, rx: RxCodeEntry[]): string[] {
   if (!note || !rx.length) return []
-  const plain = noteTextToPlain(note)
+  // ★ cwi-walkin-20261018：處方係結構化欄（note.rx），唔喺臨床文字 — 藥名都要入匹配（抗生素跟進靠呢度）
+  const plain = [noteTextToPlain(note), ...(note.rx ?? []).map((r) => r.name)].filter(Boolean).join(' ')
   if (!plain) return []
   const lower = plain.toLowerCase()
   const out: string[] = []

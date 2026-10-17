@@ -125,16 +125,40 @@ describe('extractRxLines — 處方（cwi-walkin-20261018）', () => {
     assert.equal('rx' in n, false)
   })
 
-  it('字典物件（drug{des}）+ 用法 → 藥名 + 摘要；冇藥名行跳過', () => {
-    const rx = extractRxLines([
-      { drug: { des: 'Amoxicillin 500mg', code: 'AMOX500' }, dosage: '1 cap', frequency: { des: 'TDS' }, duration: 5, durationUnit: { des: '日' }, qty: 15, unit: { des: 'cap' } },
-      { qty: 3 },
+  // 擁有人 2026-10-18 提供嘅真實樣本（consultation-notes/{id} prescriptions — 只留用到嘅欄）
+  const zh = (t: string, en: string) => ({ i18n: { des: { 'zh-tw': t, en } }, des: en })
+  const amox = {
+    drug: { code: '00002', des: '500MG AMOXICILLIN / 抗生素 500MG', drugLabel: '500MG AMOXICILLIN / 抗生素 500MG' },
+    rxDetails: [{
+      duration: 5, durationUnit: 'day', drugFreq: zh('每日 3 次', '3 Times Per Day'), drugDosage: zh('每次 1粒', '1 Tablet Each Time'),
+      ttlDosage: 15, remarks: '', isPrn: false, salesUnit: zh('粒', 'Cap(s)'),
+    }],
+    remarks: '',
+    drugCautions: [zh('抗生素必須服完整個療程', 'Antibiotic Complete The Whole Course')],
+    drugInstrs: [zh('每隔6小時', 'Every 6 Hours'), zh('飯後', 'After Meal')],
+  }
+  const famo = {
+    drug: { code: '00009', des: 'FAMOTIDINE / 胃藥 20MG' },
+    rxDetails: [{
+      duration: 5, durationUnit: 'day', drugFreq: zh('每日 3 次', '3 Times Per Day'), drugDosage: zh('每次 1粒', '1 Tablet Each Time'),
+      ttlDosage: 15, remarks: '', isPrn: true, salesUnit: zh('粒', 'Cap(s)'),
+    }],
+    remarks: '', drugCautions: [], drugInstrs: [zh('每隔6小時', 'Every 6 Hours')],
+  }
+
+  it('真實樣本：藥名 + 每次／每日／日數／總量 + 服法（中文優先）+ 注意', () => {
+    assert.deepEqual(extractRxLines([amox, famo, { rxDetails: [] }]), [
+      {
+        name: '500MG AMOXICILLIN / 抗生素 500MG',
+        detail: '每次 1粒 · 每日 3 次 · 5日 · 共 15 粒 · 每隔6小時、飯後',
+        caution: '抗生素必須服完整個療程',
+      },
+      { name: 'FAMOTIDINE / 胃藥 20MG', detail: '每次 1粒 · 每日 3 次 · 5日 · 共 15 粒 · 有需要時服 · 每隔6小時' },
     ])
-    assert.deepEqual(rx, [{ name: 'Amoxicillin 500mg', detail: '1 cap · TDS · 5日 · 共 15 cap' }])
   })
 
   it('有處方 → note.rx（STANDARD／TEMPLATE 都帶）', () => {
-    const n = extractNoteText({ complaints: 'a', findings: '', diagnosis: '', actions: '', prescriptions: [{ drugName: 'Panadol' }] })
-    assert.deepEqual(n.rx, [{ name: 'Panadol', detail: '' }])
+    const n = extractNoteText({ complaints: 'a', findings: '', diagnosis: '', actions: '', prescriptions: [{ drug: { des: 'PARACETAMOL / 止痛藥 500MG' } }] })
+    assert.deepEqual(n.rx, [{ name: 'PARACETAMOL / 止痛藥 500MG', detail: '' }])
   })
 })

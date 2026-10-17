@@ -51,36 +51,51 @@ const str = (v: unknown): string => {
   if (typeof v !== 'string') return ''
   return v.trim()
 }
-/** 物件或字串 → 顯示字（Apricot 字典欄多數係 { des, code } 物件）。 */
-const label = (v: unknown): string =>
-  v && typeof v === 'object' ? str((v as any).des ?? (v as any).name ?? (v as any).code) : str(v)
+/** Apricot 字典物件（{ des, i18n.des['zh-tw'] }）→ 中文優先顯示字；字串原樣。 */
+const label = (v: unknown): string => {
+  if (!v || typeof v !== 'object') return str(v)
+  const o = v as { des?: unknown; name?: unknown; i18n?: { des?: Record<string, unknown> } }
+  return str(o.i18n?.des?.['zh-tw']) || str(o.des) || str(o.name)
+}
+const labels = (v: unknown): string[] => (Array.isArray(v) ? v.map(label).filter(Boolean) : [])
+const DURATION_UNIT: Record<string, string> = { day: '日', week: '星期', month: '個月' }
 
 /**
- * ★ cwi-walkin-20261018：處方（note.prescriptions[]）→ 藥名 + 用法摘要。
- * ⚠️ 未有真實「有處方」樣本 — 欄位名按 Apricot 慣例（drug{des}／qty／unit／freq／duration／remarks）
- *   盡量多試；認唔到藥名嘅行跳過。拎到樣本後收窄。
+ * ★ cwi-walkin-20261018：處方（note.prescriptions[]）→ 每隻藥一行。
+ * 實測結構（擁有人 2026-10-18 提供 consultation-notes/{id} 樣本）：
+ *   drug.des = 藥名；rxDetails[] = { drugDosage, drugFreq, duration, durationUnit, ttlDosage, salesUnit, isPrn, remarks }；
+ *   drugInstrs[]（服法，例如「飯後」）；drugCautions[]（注意，例如「抗生素必須服完整個療程」）；字典物件中文優先。
+ * 零病人資料（只藥名／用法）。
  */
 export function extractRxLines(prescriptions: unknown): NoteRxLine[] {
   if (!Array.isArray(prescriptions)) return []
   const out: NoteRxLine[] = []
   for (const p of prescriptions) {
     if (!p || typeof p !== 'object') continue
-    const it = p as Record<string, unknown>
-    const name =
-      label(it.drug) || label(it.medicine) || label(it.item) ||
-      str(it.drugName) || str(it.drugDes) || str(it.itemDes) || str(it.des) || str(it.name)
+    const it = p as Record<string, any>
+    const name = label(it.drug) || str(it.drug?.drugLabel)
     if (!name) continue
-    const qty = str(it.qty ?? it.quantity)
-    const unit = label(it.unit ?? it.qtyUnit)
-    const parts = [
-      label(it.dosage ?? it.dose),
-      label(it.frequency ?? it.freq),
-      label(it.route),
-      str(it.duration ?? it.days) ? `${str(it.duration ?? it.days)}${label(it.durationUnit) || ''}` : '',
-      qty ? `共 ${qty}${unit ? ` ${unit}` : ''}` : '',
-      str(it.remarks ?? it.remark ?? it.instruction ?? it.instructions),
-    ].filter(Boolean)
-    out.push({ name, detail: parts.join(' · ') })
+    const parts: string[] = []
+    for (const d of Array.isArray(it.rxDetails) ? it.rxDetails : []) {
+      if (!d || typeof d !== 'object') continue
+      const unit = label(d.salesUnit)
+      const dur = str(d.duration)
+      parts.push(
+        ...[
+          label(d.drugDosage),
+          label(d.drugFreq),
+          dur ? `${dur}${DURATION_UNIT[str(d.durationUnit)] ?? str(d.durationUnit)}` : '',
+          str(d.ttlDosage) ? `共 ${str(d.ttlDosage)}${unit ? ` ${unit}` : ''}` : '',
+          d.isPrn === true ? '有需要時服' : '',
+          str(d.remarks),
+        ].filter(Boolean),
+      )
+    }
+    const instr = labels(it.drugInstrs)
+    if (instr.length) parts.push(instr.join('、'))
+    if (str(it.remarks)) parts.push(str(it.remarks))
+    const cautions = labels(it.drugCautions)
+    out.push({ name, detail: parts.join(' · '), ...(cautions.length ? { caution: cautions.join('；') } : {}) })
   }
   return out
 }
