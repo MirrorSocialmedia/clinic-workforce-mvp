@@ -27,6 +27,7 @@
 
 import { utcIsoToHkMin } from './availability'
 import { phoneHash } from '../phone-hash'
+import { phoneHashes } from '../phone'
 
 export interface SanitizedOpenSch {
   startTime: string; // "HH:mm"
@@ -116,6 +117,7 @@ export interface SanitizedIndexRow {
   patientCode: string
   patientName: string
   phoneHash: string  // HMAC-SHA256 hex（64）；phoneNum 缺失 → ''（空 = 唔可以 match）
+  phoneHashes: string[] // ★ cwi-patient-identify-20261017：多號 E.164 hash（phone.ts）；phoneNum 缺失 → []
   visitReasons: string[]
   remarks: string | null
 }
@@ -153,6 +155,7 @@ export function extractIndexRows(dateStr: string, node: any): SanitizedIndexRow[
       patientName: cp?.fullName != null ? String(cp.fullName) : '',
       // 🔴 phoneNum → hash 即棄 raw（raw 唔入 out，落地前斷言兜底）
       phoneHash: phone ? phoneHash(phone) : '',
+      phoneHashes: phone ? phoneHashes(phone, process.env.PHONE_HASH_KEY!) : [],
       visitReasons: reasons,
       remarks: typeof remRaw === 'string' && remRaw.trim() !== '' ? remRaw : null,
     })

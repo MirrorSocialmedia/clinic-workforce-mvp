@@ -97,6 +97,7 @@ export async function GET(req: NextRequest) {
             visitReasons: true,
             remarks: true,
             phoneHash: true,
+            phoneHashes: true,
             syncedAt: true,
           },
         })
@@ -118,6 +119,7 @@ export async function GET(req: NextRequest) {
             visitReasons: true,
             remarks: true,
             phoneHash: true,
+            phoneHashes: true,
             syncedAt: true,
           },
         })
@@ -130,8 +132,8 @@ export async function GET(req: NextRequest) {
     })
     const clinicCodeById = new Map(clinics.map(c => [c.id, c.shortName ?? c.id]))
 
-    // 模式 B：phoneHashes[]（ClinicalRecordIndex 同病人同日行嘅 hash union；
-    // 無行 → fallback [legacy phoneHash]）。模式 A 唔加（P0 回應形狀保留）。
+    // 模式 B：phoneHashes[]（ClinicalRecordIndex 同病人同日行 ∪ 預約行 phoneHashes ∪ legacy phoneHash）。
+    // 模式 A 唔加（P0 回應形狀保留）。
     let hashesByPatientDate: Map<string, string[]> | null = null
     if (clinicMode) {
       const key2 = (r: { patientApricotId: string; date: string }) => `${r.patientApricotId}|${r.date}`
@@ -182,10 +184,18 @@ export async function GET(req: NextRequest) {
         patientName: r.patientName,
         visitReasons: r.visitReasons,
         remarks: r.remarks,
+        // ★ cwi-patient-identify-20261017：到診索引 ∪ 預約行自己嘅多號 hash ∪ 舊格式 hash
+        //   （以前冇到診行就只回舊格式 → wa-inbox 新格式永遠對唔上；舊格式保留俾未升級嘅 consumer）
         ...(clinicMode
-          ? { phoneHashes: (hashesByPatientDate?.get(`${r.patientApricotId}|${r.date}`)?.length ?? 0) > 0
-              ? hashesByPatientDate!.get(`${r.patientApricotId}|${r.date}`)!
-              : [r.phoneHash] }
+          ? {
+              phoneHashes: [
+                ...new Set([
+                  ...(hashesByPatientDate?.get(`${r.patientApricotId}|${r.date}`) ?? []),
+                  ...r.phoneHashes,
+                  ...(r.phoneHash ? [r.phoneHash] : []),
+                ]),
+              ],
+            }
           : {}),
       })),
     })

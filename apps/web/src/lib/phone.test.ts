@@ -38,11 +38,19 @@ describe('normalizeHkPhones — HK 正規化 + 多號', () => {
     assert.deepEqual(normalizeHkPhones('91234567、61234567'), ['+85291234567', '+85261234567'])
   })
 
-  it('號內空位 = 分隔符（MD spec 逐字：fragment 各 4 位唔合法 → 丟）', () => {
-    // 「9123 4567 / 6123 4567」→ split 後 ['9123','4567','6123','4567'] → 全唔合法 → []
-    // （MD §1.2 逐字行為 — S4 驗證腳本會量真數據影響；如 <90% 停手檢討）
-    assert.deepEqual(normalizeHkPhones('9123 4567 / 6123 4567'), [])
-    assert.deepEqual(normalizeHkPhones('+852 9123 4567'), []) // 同理：+852 / 9123 / 4567 → 全丟
+  it('號內空格／橫線／括號照收（cwi-patient-identify-20261017 — 取代舊「號內空位 = 分隔符」）', () => {
+    assert.deepEqual(normalizeHkPhones('9123 4567'), ['+85291234567'])
+    assert.deepEqual(normalizeHkPhones('+852 9123 4567'), ['+85291234567'])
+    assert.deepEqual(normalizeHkPhones('(852) 9123-4567'), ['+85291234567'])
+    assert.deepEqual(normalizeHkPhones('9123 4567 / 6123 4567'), ['+85291234567', '+85261234567'])
+    assert.deepEqual(normalizeHkPhones('9123 4567 6123 4567'), ['+85291234567', '+85261234567'])
+  })
+
+  it('內地手機：+86／86／冇國碼 11 位 → +86', () => {
+    for (const s of ['+86 138 1234 5678', '+8613812345678', '8613812345678', '13812345678', '138-1234-5678']) {
+      assert.deepEqual(normalizeHkPhones(s), ['+8613812345678'], s)
+    }
+    assert.deepEqual(normalizeHkPhones('13812345678 / 9123 4567'), ['+8613812345678', '+85291234567'])
   })
 
   it('其他國家（+ 開頭 8-15 位）→ 原樣保留', () => {
