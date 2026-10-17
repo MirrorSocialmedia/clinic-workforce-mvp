@@ -52,13 +52,20 @@ export async function GET(req: NextRequest) {
     const clinicCodeRaw = (params.get('clinicCode') ?? '').trim()
     const from = params.get('from')
     const to = params.get('to')
+    // ★ cwi-patient-records-20261017：模式 C — patientApricotId（該病人喺**全部店**嘅預約；inbox 病人記錄「預約」分頁用 —
+    //   以前只睇 WhatsApp 號碼嗰間店 → 病人去其他店約就睇唔到）
+    const patientApricotId = (params.get('patientApricotId') ?? '').trim()
     const phoneHashMode = !!phoneHash
     const clinicMode = !!clinicCodeRaw
-    if (phoneHashMode && clinicMode) {
-      throw new ExternalApiError(400, 'phoneHash and clinicCode are mutually exclusive', 'BAD_REQUEST')
+    const patientMode = !!patientApricotId
+    if ([phoneHashMode, clinicMode, patientMode].filter(Boolean).length > 1) {
+      throw new ExternalApiError(400, 'phoneHash / clinicCode / patientApricotId are mutually exclusive', 'BAD_REQUEST')
     }
-    if (!phoneHashMode && !clinicMode) {
-      throw new ExternalApiError(400, 'phoneHash or clinicCode required', 'BAD_REQUEST')
+    if (!phoneHashMode && !clinicMode && !patientMode) {
+      throw new ExternalApiError(400, 'phoneHash, clinicCode or patientApricotId required', 'BAD_REQUEST')
+    }
+    if (patientMode && patientApricotId.length > 100) {
+      throw new ExternalApiError(400, 'patientApricotId too long', 'BAD_REQUEST')
     }
     if (phoneHashMode && !PHONE_HASH_RE.test(phoneHash)) {
       throw new ExternalApiError(400, 'phoneHash must be 64-char hex', 'BAD_REQUEST')
@@ -78,9 +85,9 @@ export async function GET(req: NextRequest) {
       clinicId = clinic.id
     }
 
-    const rows = phoneHashMode
+    const rows = phoneHashMode || patientMode
       ? await basePrisma.appointmentIndex.findMany({
-          where: { phoneHash, date: { gte: from, lte: to } },
+          where: { ...(patientMode ? { patientApricotId } : { phoneHash }), date: { gte: from, lte: to } },
           orderBy: [{ date: 'asc' }, { startTime: 'asc' }],
           select: {
             apricotApptId: true,
