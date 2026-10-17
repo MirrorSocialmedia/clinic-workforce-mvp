@@ -17,7 +17,7 @@
 
 import { apricotCall } from '@/lib/apricot/client'
 import { withApricotLock } from '@/lib/apricot/lock'
-import { hkDateStart, hkDateEnd } from '@/lib/hk-date'
+import { hkDateStart, hkDateEnd, toHKDateStr } from '@/lib/hk-date'
 import { PAGE_SIZE, rateLimitMs, type ClinicalCallFn } from './types'
 
 /** 預設 callFn = 真 Apricot（cookie 三件套 + rotation 已喺 apricotCall 封裝）。
@@ -122,6 +122,24 @@ export async function getPatientBills(call: ClinicalCallFn, cpId: string, date: 
     },
   )
   return Array.isArray(data) ? data : (data?.content ?? [])
+}
+
+/**
+ * ★ cwi-patient-records-20261017：病人全部帳單（overview — 一次攞最近 30 張，唔分日、唔分店；
+ * 含作廢單 — resolvePatientDay 自己濾 isVoid）。擁有人 2026-10-17 瀏覽器實測：同 bills/search 逐日結果一致。
+ * 立即更新補 N 日用：N 個 bills/search → 1 call。
+ */
+export async function getPatientBillsOverview(call: ClinicalCallFn, cpId: string): Promise<any[]> {
+  const data = await call(
+    `/services/aepsmsbill/api/bills/payer/${cpId}/overview?page=0&size=30&sort=desc&payerType=0`,
+    { body: JSON.stringify({ params: [{ key: 'ovFilterType', value: 'ALL' }] }) },
+  )
+  return Array.isArray(data) ? data : (data?.content ?? [])
+}
+
+/** overview 帳單 → 某個香港日（billTime 係 UTC，例如 16:00Z = 香港翌日 00:00）。 */
+export function billsForDay(bills: any[], day: string): any[] {
+  return bills.filter((b) => typeof b?.billTime === 'string' && toHKDateStr(b.billTime) === day)
 }
 
 /** 逐病人 3 call（MD §2.3：appointments / consultation-notes / bills，順序執行 — 限速喺 callFn 層）。 */

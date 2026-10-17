@@ -30,6 +30,8 @@ import {
   getPatientAppointments,
   getPatientNotes,
   getPatientBills,
+  getPatientBillsOverview,
+  billsForDay,
 } from './apricot-client'
 import { resolvePatientDay, upsertVisitIndex, buildClinicMap } from './visit-index'
 import { loadRxCodeEntries } from '@/lib/clinical/extract-rx-codes'
@@ -110,7 +112,7 @@ export type RefreshResult =
   | { ok: false; reason: 'NOT_FOUND' }
 
 /**
- * 單一病人即時刷新（正好三 call：appointments → notes → bills，順序執行）。
+ * 單一病人即時刷新（正好三 call：appointments → notes → bills overview，順序執行；補 N 日都係三 call）。
  * 目標日 = 最新 past appointment 日（≤ today）；無 appointment → fallback
  * 索引行（≤ today 最新）；都冇 → NOT_FOUND（route 回 404）。
  * Apricot 限速/認證/未配置 → throw ApricotUnavailableError（route 回 503）。
@@ -170,12 +172,21 @@ async function refreshPatientIndexImpl(
     targetDay = toHKDateStr(row.visitDate)
   }
 
-  // Call 2+3：notes + bills（目標日）
+  // Call 2+3：notes + bills
+  // ★ cwi-patient-records-20261017：bills 改用 overview（一次攞晒全部日子）；overview 失敗（非限速／認證）
+  //   → 退返舊 bills/search 逐日（allBills = null）
   let notes: any[]
+  let allBills: any[] | null = null
   let bills: any[]
   try {
     notes = await getPatientNotes(call, cpId)
-    bills = await getPatientBills(call, cpId, targetDay)
+    try {
+      allBills = await getPatientBillsOverview(call, cpId)
+    } catch (e) {
+      if (isStopNightError(e)) throw e
+      console.warn('[clinical-index-refresh] bills overview 失敗 → 退返逐日 bills/search:', (e as Error)?.message)
+    }
+    bills = allBills ? billsForDay(allBills, targetDay) : await getPatientBills(call, cpId, targetDay)
   } catch (e) {
     if (isStopNightError(e)) throw new ApricotUnavailableError()
     throw e
@@ -193,12 +204,12 @@ async function refreshPatientIndexImpl(
   const v = resolvePatientDay({ patient, appointments, notes, bills, day: targetDay, clinicMap, phoneKey, rxCodeEntries })
   if (v) await upsertVisitIndex(v)
 
-  // ★ cwi-patient-records-20261017：補更早嘅到診日（每日 1 call bills；notes 已經全部攞咗）—
+  // ★ cwi-patient-records-20261017：補更早嘅到診日（bills 用 overview 已攞晒 — 零額外 call；退返逐日先每日 1 call）—
   //   限速／認證錯 → 停（已補嘅保留，唔令成次 refresh 失敗）；其他錯 → 跳過嗰日。報價抽取只做最新一日。
   let extraIndexed = 0
   for (const day of extraDays) {
     try {
-      const dayBills = await getPatientBills(call, cpId, day)
+      const dayBills = allBills ? billsForDay(allBills, day) : await getPatientBills(call, cpId, day)
       const ev = resolvePatientDay({ patient, appointments, notes, bills: dayBills, day, clinicMap, phoneKey, rxCodeEntries })
       if (ev) {
         await upsertVisitIndex(ev)
