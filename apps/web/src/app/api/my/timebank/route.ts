@@ -47,6 +47,8 @@ export async function GET(req: NextRequest) {
     // ★ 逐日考勤明細 —— calculateTimeBank 一直有計（payroll-engine:1656-1660），
     //   只係之前冇回。員工要睇「邊日有 OT／早退」，唔係睇 INIT_ADJUST。
     //   拍板 2026-08-21：保留逐日考勤、剷 TimeBankEntry 清單（entries/findMany 一併剷）。
+    //   ★ cwm-tbmanual-20261017：員工手機帳本（手動調整：原因）喺 /api/my/timebank-ledger
+    //   → buildTimeBankLedger（TB_LEDGER_ENTRY_TYPES 已包 MANUAL_ADJUST，label「手動調整／撤銷手動調整」）。
     attendanceDays: (tb.timeAccountDetail ?? [])
       .slice()
       .sort((a: any, b: any) => String(b.date).localeCompare(String(a.date))),

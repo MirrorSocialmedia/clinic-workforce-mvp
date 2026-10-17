@@ -5,6 +5,8 @@
 //      唔係時間帳戶餘額，同上面逐月表期末對唔上，會誤導。只顯示呢次 +／− 幾多。
 // ============================================================
 
+import { fmtManualMinutes } from './timebank-manual'
+
 export interface AuditRowIn { action: string; beforeJson: string | null; afterJson: string | null; notes: string | null }
 export interface AuditText {
   /** 做咗乜（中文） */
@@ -76,6 +78,24 @@ export function describeTimebankAudit(a: AuditRowIn): AuditText {
         title: '初始化時間帳戶',
         delta: b != null && af != null ? af - b : null,
         detail: join(n?.effectiveMonth ? `由 ${n.effectiveMonth} 起，期初設為 ${fmtMinutesSigned(num(n?.minutes) ?? 0).replace(/^\+/, '')}` : null, n?.reason ? `原因：${n.reason}` : null),
+      }
+    }
+    case 'TIMEBANK_MANUAL_ADJUST': {
+      // ★ cwm-tbmanual-20261017：手動調整（累加）——「手動調整時間帳戶 +9 小時 0 分：原因」
+      const mins = num(n?.minutes)
+      return {
+        title: '手動調整時間帳戶',
+        delta: mins,
+        detail: mins != null ? `${fmtManualMinutes(mins)}：${n?.reason ?? ''}`.replace(/：$/, '') : (n?.reason ? `原因：${n.reason}` : ''),
+      }
+    }
+    case 'TIMEBANK_MANUAL_REVERSE': {
+      // ★ cwm-tbmanual-20261017：撤銷手動調整（自動寫相反數行）
+      const mins = num(n?.minutes)
+      return {
+        title: '撤銷手動調整時間帳戶',
+        delta: mins,
+        detail: mins != null ? `${fmtManualMinutes(mins)}：${n?.reason ?? ''}`.replace(/：$/, '') : '',
       }
     }
     case 'TIMEBANK_ABSENT_DEDUCT':

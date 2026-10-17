@@ -37,6 +37,8 @@ export default function EmployeeOverviewPage() {
   const [showResignModal, setShowResignModal] = useState(false)
 
   const [userRole, setUserRole] = useState<string>('')
+  // ★ cwm-tbmanual-20261017：手動調整撤銷只限 OWNER（MD §1.3）
+  const isTbOwner = userRole === 'OWNER' /* ROLE-OK: 手動調整撤銷只限 OWNER（MD §1.3） */
   const [grant, setGrant] = useState<string[]>([])
   const [deny, setDeny] = useState<string[]>([])
   const [loading, setLoading] = useState(true)
@@ -118,6 +120,29 @@ export default function EmployeeOverviewPage() {
   useEffect(() => {
     fetchTbLedger(6)
   }, [fetchTbLedger])
+
+  // ★ cwm-tbmanual-20261017：手動調整撤銷（OWNER）—— 自動寫一行相反數，每行只可以撤銷一次
+  const [tbReversing, setTbReversing] = useState<string | null>(null)
+  const handleReverseTbEntry = useCallback(async (entryId: string) => {
+    const reason = window.prompt('撤銷原因（可留空）', '')
+    if (reason === null) return // 取消
+    setTbReversing(entryId)
+    try {
+      const res = await api('/api/timebank/manual-adjust/reverse', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ entryId, reason: reason.trim() }),
+      })
+      const d = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        window.alert(`❌ ${d.error || '撤銷失敗'}`)
+        return
+      }
+      await fetchTbLedger(tbLedgerMonths)
+    } finally {
+      setTbReversing(null)
+    }
+  }, [fetchTbLedger, tbLedgerMonths])
 
   useEffect(() => {
     fetchBasic()
@@ -344,6 +369,9 @@ export default function EmployeeOverviewPage() {
               months={tbLedgerMonths}
               loadingMore={tbLedgerLoadingMore}
               onMore={() => fetchTbLedger(Math.min(tbLedgerMonths + 6, 24), true)}
+              canReverse={isTbOwner /* ROLE-OK: 手動調整撤銷只限 OWNER（MD §1.3） */}
+              onReverse={handleReverseTbEntry}
+              reversing={tbReversing != null}
             />
           </OverviewSection>
 
@@ -534,9 +562,15 @@ function signMin(n: number): string {
 }
 
 /** ② 逐筆 running balance：（期初）→ 逐行累計 →（期末）✓/✗ */
-function LedgerRunningBalance({ m }: { m: any }) {
+function LedgerRunningBalance({ m, canReverse, onReverse, reversing }: {
+  m: any
+  // ★ cwm-tbmanual-20261017：MANUAL_ADJUST 行右邊「撤銷」細掣（只限 OWNER、未撤銷、未鎖月份）
+  canReverse?: boolean
+  onReverse?: (entryId: string) => void
+  reversing?: boolean
+}) {
   let running = m.opening
-  const rows: { key: string; date: string; label: string; minutes: string; bal: number; style: React.CSSProperties; title?: string }[] = []
+  const rows: { key: string; date: string; label: string; minutes: string; bal: number; style: React.CSSProperties; title?: string; type?: string; reversed?: boolean; entryId?: string | null }[] = []
   rows.push({ key: 'opening', date: '（期初）', label: '', minutes: '—', bal: running, style: { color: '#666' } })
   for (const l of m.lines ?? []) {
     running += l.informational ? 0 : (Number(l.minutes) || 0)
@@ -550,6 +584,7 @@ function LedgerRunningBalance({ m }: { m: any }) {
       date: l.date, label: l.label,
       minutes: l.informational ? '0' : signMin(l.minutes),
       bal: running, style, title,
+      type: l.type, reversed: l.reversed === true, entryId: l.entryId ?? null,
     })
   }
   const ok = running === m.closing
@@ -563,17 +598,33 @@ function LedgerRunningBalance({ m }: { m: any }) {
           <th style={{ textAlign: 'left', padding: '3px 6px' }}>類型</th>
           <th style={{ textAlign: 'right', padding: '3px 6px', width: 70 }}>分鐘</th>
           <th style={{ textAlign: 'right', padding: '3px 6px', width: 90 }}>結餘</th>
+          {canReverse ? <th style={{ textAlign: 'right', padding: '3px 6px', width: 56 }}>操作</th> : null}
         </tr>
       </thead>
       <tbody>
-        {rows.map(r => (
+        {rows.map(r => {
+          const canRevThis = !!canReverse && !!onReverse && !!r.entryId && r.type === 'MANUAL_ADJUST' && !r.reversed && !m.locked
+          return (
           <tr key={r.key} style={r.style} title={r.title}>
             <td style={{ padding: '3px 6px', whiteSpace: 'nowrap', fontFamily: 'monospace' }}>{r.date}</td>
-            <td style={{ padding: '3px 6px' }}>{r.label}</td>
+            <td style={{ padding: '3px 6px' }}>{r.label}{r.type === 'MANUAL_ADJUST' && r.reversed ? '（已撤銷）' : ''}</td>
             <td style={{ padding: '3px 6px', textAlign: 'right', fontFamily: 'monospace' }}>{r.minutes}</td>
             <td style={{ padding: '3px 6px', textAlign: 'right', fontFamily: 'monospace', fontWeight: 600 }}>{r.bal}</td>
+            {canReverse ? (
+              <td style={{ padding: '2px 6px', textAlign: 'right' }}>
+                {canRevThis && (
+                  <button
+                    onClick={e => { e.stopPropagation(); onReverse!(r.entryId!) }}
+                    disabled={reversing}
+                    style={{ fontSize: 10, padding: '1px 8px', borderRadius: 4, border: '1px solid #dc3545', color: '#dc3545', background: '#fff', cursor: 'pointer' }}
+                    title="自動寫一行相反數（每行只可以撤銷一次）"
+                  >{reversing ? '處理中…' : '撤銷'}</button>
+                )}
+              </td>
+            ) : null}
           </tr>
-        ))}
+          )
+        })}
       </tbody>
     </table>
   )
@@ -581,9 +632,12 @@ function LedgerRunningBalance({ m }: { m: any }) {
 
 function TimeBankLedgerSection({
   ledger, loading, error, months, loadingMore, onMore,
+  canReverse, onReverse, reversing,
 }: {
   ledger: any; loading: boolean; error: string | null
   months: number; loadingMore: boolean; onMore: () => void
+  // ★ cwm-tbmanual-20261017：撤銷細掣（只限 OWNER 先傳 canReverse）
+  canReverse?: boolean; onReverse?: (entryId: string) => void; reversing?: boolean
 }) {
   const [expanded, setExpanded] = useState<string | null>(null)
 
@@ -654,13 +708,15 @@ function TimeBankLedgerSection({
                   <td style={{ padding: '4px 6px', fontSize: 11, whiteSpace: 'nowrap' }}>
                     {m.frozen
                       ? <>🔒 已凍結{m.frozenAt ? ` ${toHKDateStr(m.frozenAt)}` : ''}</>
-                      : '⏳ 未確認計糧（即時計算）'}
+                      : m.locked
+                        ? '🔒 計糧已確認（手動調整／撤銷唔准）'
+                        : '⏳ 未確認計糧（即時計算）'}
                   </td>
                 </tr>
                 {isOpen && (
                   <tr>
                     <td colSpan={7} style={{ padding: '6px 10px 10px', background: '#fbfbfb', borderLeft: '3px solid #0d6efd' }}>
-                      <LedgerRunningBalance m={m} />
+                      <LedgerRunningBalance m={m} canReverse={canReverse} onReverse={onReverse} reversing={reversing} />
                     </td>
                   </tr>
                 )}

@@ -16,7 +16,7 @@ export type TimeAccountRow = {
  * 時間帳戶累計餘額 —— 全系統唯一入口。
  *
  * ★ 唔好再喺任何地方自己 sum TimeBankEntry —— 嗰張表只有手動調整
- *   （INIT_ADJUST / MAKEUP / CONVERT / RESTDAY_GRANT），
+ *   （INIT_ADJUST / MANUAL_ADJUST / MAKEUP / CONVERT / RESTDAY_GRANT），
  *   由打卡算出嚟嘅遲到／早退／OT 完全唔喺入面。
  *   儀表板舊版就係咁做，令所有冇做過手動調整嘅員工永遠顯示 0。
  *

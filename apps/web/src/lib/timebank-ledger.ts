@@ -13,7 +13,7 @@ import { toHKDateStr, getMonthRange } from './hk-date'
 
 /** ★ 入帳嘅實體 entry type —— ⚠️ RESTDAY_GRANT 唔喺度（假期發放，另一本帳） */
 export const TB_LEDGER_ENTRY_TYPES = [
-  'MAKEUP', 'LEAVE_CONVERT', 'LEAVE_SWAP_BACK', 'INIT_ADJUST', 'REST_TO_ACCOUNT', 'ROSTER_DIFF', 'OT_BACKPAY',
+  'MAKEUP', 'LEAVE_CONVERT', 'LEAVE_SWAP_BACK', 'INIT_ADJUST', 'MANUAL_ADJUST', 'REST_TO_ACCOUNT', 'ROSTER_DIFF', 'OT_BACKPAY',
 ] as const
 
 export interface LedgerLine {
@@ -25,6 +25,7 @@ export interface LedgerLine {
   note?: string | null
   entryId?: string | null      // ENTRY 行先有 —— 可以追返 DB
   informational?: boolean      // true = 顯示但唔入帳（遲到／早退補鐘）
+  reversed?: boolean           // ★ cwm-tbmanual-20261017：MANUAL_ADJUST 行已經被撤銷（有 reversesEntryId 指向佢嘅行）
 }
 
 export interface LedgerMonth {
@@ -36,6 +37,8 @@ export interface LedgerMonth {
   frozen: boolean
   frozenAt?: string | null
   engineVersion?: number | null
+  // ★ cwm-tbmanual-20261017：該月計糧已確認（FINALIZED/EXPORTED）—— 手動調整／撤銷都唔准
+  locked?: boolean
 }
 
 export async function buildTimeBankLedger(
@@ -67,6 +70,16 @@ export async function buildTimeBankLedger(
     where: { employeeId, type: { in: [...TB_LEDGER_ENTRY_TYPES] }, date: { gte: start, lte: end } },
     orderBy: [{ date: 'asc' }, { id: 'asc' }],
   })
+  // ★ cwm-tbmanual-20261017：搵邊啲 MANUAL_ADJUST 行已經被撤銷（撤銷行 = reversesEntryId 指向原本行）
+  let reversedIds = new Set<string>()
+  const manualIds = entries.filter((e: any) => e.type === 'MANUAL_ADJUST' && !e.reversesEntryId).map((e: any) => e.id)
+  if (manualIds.length > 0) {
+    const revRows = await db.timeBankEntry.findMany({
+      where: { reversesEntryId: { in: manualIds } },
+      select: { reversesEntryId: true },
+    })
+    reversedIds = new Set(revRows.map((r: any) => r.reversesEntryId).filter(Boolean) as string[])
+  }
   for (const e of entries) {
     if (e.type === 'MAKEUP' && e.targetType !== 'ABSENT') {
       // ★ 遲到／早退補鐘：淨效果係零（抵銷咗遲到扣減，同時消耗等額 OT）。
@@ -81,6 +94,7 @@ export async function buildTimeBankLedger(
     lines.push({
       date: toHKDateStr(e.date), kind: 'ENTRY', type: e.type,
       label: ledgerLabel(e), minutes: e.minutes, note: e.note, entryId: e.id,
+      ...(e.type === 'MANUAL_ADJUST' ? { reversed: reversedIds.has(e.id) } : {}),
     })
   }
 
@@ -113,6 +127,7 @@ function ledgerLabel(e: any): string {
     case 'LEAVE_CONVERT': return 'OT 換假'
     case 'LEAVE_SWAP_BACK': return '換假退回'
     case 'INIT_ADJUST': return '初始化調整'
+    case 'MANUAL_ADJUST': return e.reversesEntryId ? '撤銷手動調整' : '手動調整'
     case 'REST_TO_ACCOUNT': return '休息日轉入'
     case 'ROSTER_DIFF': return '編更差額'
     case 'OT_BACKPAY': return '補回 OT'

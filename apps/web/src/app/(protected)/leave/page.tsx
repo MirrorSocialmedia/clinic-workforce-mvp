@@ -6,6 +6,7 @@ import { isAccumulativeLeave, LEAVE_SYSTEM_KEYS, zeroEntitledHint } from '@/lib/
 import { PROBATION_MONTHS } from '@/lib/leave-calculation'
 import { Plus } from 'lucide-react'
 import { useLiveRefresh } from '@/lib/live-refresh'
+import TimebankManualAdjustCard from '@/components/timebank/ManualAdjustCard'
 
 type Role = 'OWNER' | 'MANAGER' | 'ACCOUNTANT' | 'EMPLOYEE' | 'KIOSK'
 type LeaveStatus = 'PENDING' | 'APPROVED' | 'REJECTED'
@@ -901,7 +902,9 @@ export default function LeavePage() {
             </section>
             )
           })()}
-          
+
+          {/* 2c. 手動調整時間帳戶（OWNER only）— ★ cwm-tbmanual-20261017 累加語義 */}
+          {isOwner && <TimebankManualAdjustCard employees={employees} />}
 
           {/* 3. 初始化假期額度（OWNER only） */}
           {isManager && (

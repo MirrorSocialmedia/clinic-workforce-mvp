@@ -74,6 +74,14 @@ export async function GET(
   }
 
   const out: LedgerMonth[] = []
+  // ★ cwm-tbmanual-20261017：邊啲月計糧已確認（FINALIZED/EXPORTED）—— 手動調整卡／撤銷掣要顯示紅字提示
+  const lockedRows: Array<{ ym: string }> = await prisma.$queryRaw`
+    SELECT DISTINCT to_char((r."periodMonth" AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Hong_Kong', 'YYYY-MM') AS ym
+      FROM "PayrollRun" r
+      JOIN "PayrollItem" pi ON pi."runId" = r.id AND pi."employeeId" = ${params.id}
+     WHERE r.status IN ('FINALIZED','EXPORTED')
+       AND to_char((r."periodMonth" AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Hong_Kong', 'YYYY-MM') = ANY(${monthKeys})`
+  const lockedSet = new Set(lockedRows.map(r => r.ym))
   for (const pmKey of monthKeys) {
     const snap = await prisma.timeBankLedgerSnapshot.findUnique({
       where: { employeeId_periodMonth: { employeeId: params.id, periodMonth: pmKey } },
@@ -93,13 +101,15 @@ export async function GET(
         frozen: true,
         frozenAt: snap.frozenAt.toISOString(),
         engineVersion: snap.engineVersion,
+        locked: true, // 有 snapshot = 該月已確認計糧
       })
     } else if (notApplicable) {
       // 時薪：無時間帳戶（同總覽頂部口徑），回空月
-      out.push({ periodMonth: pmKey, opening: 0, closing: 0, lines: [], reconciles: true, frozen: false })
+      out.push({ periodMonth: pmKey, opening: 0, closing: 0, lines: [], reconciles: true, frozen: false, locked: lockedSet.has(pmKey) })
     } else {
       // 未確認計糧 → 即時算
-      out.push(await buildTimeBankLedger(prisma, params.id, pmKey, cfg))
+      const m = await buildTimeBankLedger(prisma, params.id, pmKey, cfg)
+      out.push({ ...m, locked: lockedSet.has(pmKey) })
     }
   }
 

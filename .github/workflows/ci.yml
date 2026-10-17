@@ -167,6 +167,8 @@ jobs:
             src/lib/provider-label.test.ts \
             src/lib/adw-sources.test.ts \
             src/lib/timebank-audit-text.test.ts \
+            src/lib/timebank-manual.test.ts \
+            src/lib/timebank-manual-db.test.ts \
             src/lib/cheque-print/words.test.ts \
             src/lib/cheque-print/encode.test.ts \
             src/lib/payout/cost-detail.test.ts \

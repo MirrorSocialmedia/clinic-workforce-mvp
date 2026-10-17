@@ -1711,7 +1711,8 @@ async function getCarriedFrom(
   if (rec && rec.cacheKey === key) return rec.balance ?? 0
 
   // ② No record (or stale cache): check if last month had any activity (punches OR TimeBankEntry)
-  // ★ TimeBankEntry (INIT_ADJUST/REST_TO_ACCOUNT etc.) also counts as activity!
+  // ★ TimeBankEntry (INIT_ADJUST/MANUAL_ADJUST/REST_TO_ACCOUNT etc.) also counts as activity!
+  //   ⚠️ 呢度故意冇 type 白名單 —— 任何手動行（包 MANUAL_ADJUST 撤銷行）都係 activity，唔可以漏。
   const hasPunch = await db.punchRecord.findFirst({
     where: {
       employeeId,
@@ -2157,7 +2158,7 @@ export async function calculateTimeBank(
     // ★ 2026-08-08: EARLY_IN_OT 唔入 ADJUST_TYPES（物理隔離，唔好同錢線撞）
     // ★ ROSTER_DIFF：編更差額，計糧生成時寫入、退回時刪除
     // ★ cwm-otbackpay-20261010：OT_BACKPAY = 補回之前月份少計嘅 OT（記喺補回嗰個月，唔改已出糧月份）
-    const ADJUST_TYPES = ['LEAVE_CONVERT', 'LEAVE_SWAP_BACK', 'INIT_ADJUST', 'REST_TO_ACCOUNT', 'ROSTER_DIFF', 'OT_BACKPAY']
+    const ADJUST_TYPES = ['LEAVE_CONVERT', 'LEAVE_SWAP_BACK', 'INIT_ADJUST', 'MANUAL_ADJUST', 'REST_TO_ACCOUNT', 'ROSTER_DIFF', 'OT_BACKPAY']
     const convertEntries = await db.timeBankEntry?.findMany?.({
       where: { employeeId, type: { in: ADJUST_TYPES }, date: { gte: monthStart, lte: monthEnd } },
     })

@@ -1018,6 +1018,9 @@ model TimeBankEntry {
   note       String?
   createdBy  String? // 補鐘/換假記誰做的
   targetType String? // 'LATE' | 'EARLY_LEAVE' | 'ABSENT'（MAKEUP 類型用，按類型標記避免連坐）
+  /// ★ 手動調整撤銷：指向被撤銷嘅原本 MANUAL_ADJUST 行；每行只可以被撤銷一次
+  ///   （partial unique 喺 migration 20261022000000_timebank_manual_adjust）
+  reversesEntryId String?
   createdAt  DateTime @default(now())
 
   // ★ cwm-money P2-1：Prisma schema 表達唔到 partial index，raw migration 兜底

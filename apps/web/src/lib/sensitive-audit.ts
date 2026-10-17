@@ -23,6 +23,8 @@ export const SENSITIVE_AUDIT_SPEC: Array<{ action: string; entity?: string; labe
   { action: 'EARLY_OT_SELF_APPROVE', label: '⚠️ 自批提早上班OT' },
   { action: 'FACE_REVIEW_ACTION', label: '人臉覆核批核' },
   { action: 'TIMEBANK_INIT_ADJUST', label: '初始化時間帳戶' },
+  { action: 'TIMEBANK_MANUAL_ADJUST', label: '手動調整時間帳戶' }, // ★ cwm-tbmanual-20261017
+  { action: 'TIMEBANK_MANUAL_REVERSE', label: '撤銷手動調整時間帳戶' }, // ★ cwm-tbmanual-20261017
   { action: 'TIMEBANK_MAKEUP', label: '補鐘' },
   { action: 'TIMEBANK_CONVERT', label: '時間帳戶兌換' },
   { action: 'TIMEBANK_ABSENT_DEDUCT', label: '缺勤扣OT鐘' },
