@@ -96,6 +96,8 @@ export function sheetRowFrom(item: any, ctx: {
     maternityPay: n2((Number(item.maternityPay) || 0) + (Number(item.paternityPay) || 0)),
     adwAdjustment: n2(detail.adwAdjustment),
     storeBonus: n2(item.storeBonus),
+    // ★ cwm-payadj-20261017 ②：計糧調整（可選欄；引擎 detail 頂層）
+    adjPreMpf: n2(detail.adjPreMpf),
     grossPay: salary,
     mpf,
     mpfEmployer: n2(detail.mpfEmployer),
@@ -103,6 +105,7 @@ export function sheetRowFrom(item: any, ctx: {
     tbCashout: n2(detail.resignSettlement?.tbCashout),
     rsGrossAdd: n2(detail.resignSettlement?.grossAdd),
     excessRestDeduction: n2(detail.resignSettlement?.excessRestDeduction),
+    adjPostMpf: n2(detail.adjPostMpf),
     netPay: net,
     miscAmount: fare,
     totalPayable: total,

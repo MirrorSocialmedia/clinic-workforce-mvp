@@ -147,6 +147,8 @@ const fakes: Record<string, Any> = {
   },
   expenseEntry: { findMany: async () => [] },
   consultationRevenue: { findFirst: async () => null },
+  // ★ cwm-payadj ②：engine 每月必查調整（呢個 test 冇調整行 → 空）
+  payrollAdjustment: { findMany: async () => [] },
   // ★ calculateTimeBank 由 DB payRule 讀 lunch_break/OT 門檻（唔係傳入嘅 config）
   //   → 要返 active rule + configJson，lunchLate 先會計
   payRule: {

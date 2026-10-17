@@ -231,6 +231,11 @@ export const CONFIG = {
     'PATCH /api/payroll-runs/:id/employee/:id': ['OWNER'],
     'POST /api/payroll-runs/:id/employee/:id': ['OWNER', 'MANAGER'], // ★ cwm-payrollsingle-20261003：草稿單個員工重算
     'DELETE /api/payroll-runs/:id/employee/:id': ['OWNER', 'MANAGER'], // ★ cwm-payrollsingle-20261003：草稿單個員工移除
+    // ★ cwm-payadj-20261017 ②：計糧調整（MD §2.5 — 同計糧明細頁改數：寫 OWNER+MANAGER，ACCOUNTANT 只讀）
+    'GET /api/payroll-runs/:id/employee/:id/adjustments': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
+    'POST /api/payroll-runs/:id/employee/:id/adjustments': ['OWNER', 'MANAGER'],
+    'PUT /api/payroll-runs/:id/employee/:id/adjustments/:id': ['OWNER', 'MANAGER'],
+    'DELETE /api/payroll-runs/:id/employee/:id/adjustments/:id': ['OWNER', 'MANAGER'],
     // ★ cwm-payrollsheet-20260921 S4：月度出糧總表（保密過濾同 export 同一把尺）
     'GET /api/payroll-runs/cheque-sheet': ['OWNER', 'MANAGER', 'ACCOUNTANT'],
     // ★ cwm-chequetpl-20261004：出糧總表自訂模版／出糧診所 —— 老闆拍板「只俾老闆用」，★★★ 唔加 RBAC_PERM_OVERRIDES

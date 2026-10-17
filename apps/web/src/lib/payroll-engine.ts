@@ -22,6 +22,8 @@ import { calcMpfEmployer } from './mpf-employer'
 import { findPayRuleForMonth } from './pay-rule-for-month'
 import { pickResignChoice, toEngineBonusOverride, type SettlementBonusChoice } from './settlement-utils'
 import { employedFromWhere } from './employment-scope'
+// ★ cwm-payadj-20261017 ②：計糧調整（MPF 前／MPF 後）
+import { loadAdjustments, sumAdjustments } from './payroll/adjustments'
 
 // ------------------------------------------------------------------
 // TimeBank Engine Version + Cache Key
@@ -3486,6 +3488,12 @@ async function calculateSimpleHourlyPay(
   const lunchMin = lunch.minMinutes ?? 30
   const { start: monthStart, end: monthEnd } = getMonthRange(monthDate)
 
+  const adj = await loadAdjustments(prisma, employeeId, toHKDateStr(monthDate).slice(0, 7))
+  const { pre: adjPre, post: adjPost, hash: adjHash } = sumAdjustments(adj)
+  // ★ cwm-payadj-20261017 ②（MD §2.4 時薪路徑）：時薪員工一樣可以加計糧調整。
+  //   時薪 MPF=0（老細拍板）→ adjPre 只影響 gross/eoWage；adjPost 落 net。
+  //   ⚠️ 月份 key 必用 toHKDateStr(...).slice(0,7)（engine 慣例）— hkParts 嘅 m 係 0-based，直接拼會差一個月。
+
   const shifts = await prisma.shift.findMany({
     where: {
       employeeId,
@@ -3635,15 +3643,15 @@ async function calculateSimpleHourlyPay(
   const rsTbDed = rsSettle ? Math.max(0, Number(rsSettle.tbDeduction) || 0) : 0
   const rsExcessRest = rsSettle ? Math.max(0, Number(rsSettle.excessRestDeduction) || 0) : 0
 
-  const grossPay = Math.round((totalPay + rsGrossAdd - rsExcessRest) * 100) / 100
+  const grossPay = Math.round((totalPay + rsGrossAdd - rsExcessRest + adjPre) * 100) / 100 // ★ cwm-payadj ②：+ adjPre（MPF 前入 gross→eoWage）
   // ★ 老細拍板（2026-09-29，MD §5 Q1）：時薪無 MPF（另處理）— 明寫 0，唔係「唔寫」；
   //   結算金額全部唔計入 MPF 基數（includedInMpf = false）
   // ★ cwm-resignmpf-20261004：離職結算卡人手輸入咗 MPF → 用人手數（老闆要求）；冇就照舊 0
   const mpf = manualMpf(rsSettle) ?? 0
   // ★ 2026-09-30 [cwm-restdebt] RS-15：扣款大過應付時 netPay 唔准靜靜變 0 —— warn + netClamped 標記俾對數用
-  const netPayRawH = Math.round((grossPay - mpf - rsTbDed) * 100) / 100
+  const netPayRawH = Math.round((grossPay - mpf - rsTbDed + adjPost) * 100) / 100 // ★ cwm-payadj ②：+ adjPost（MPF 後）
   const netClampedH = netPayRawH < 0
-  if (netClampedH) console.warn(`[payroll-engine] ⚠️ RS-15 HOURLY netPay clamped to 0（扣款大過應付）：emp=${employeeId} month=${monthDate} gross=${grossPay} mpf=${mpf} rsTbDed=${rsTbDed} raw=${netPayRawH}`)
+  if (netClampedH) console.warn(`[payroll-engine] ⚠️ RS-15 HOURLY netPay clamped to 0（扣款大過應付）：emp=${employeeId} month=${monthDate} gross=${grossPay} mpf=${mpf} rsTbDed=${rsTbDed} adjPost=${adjPost} raw=${netPayRawH}`)
   const netPay = Math.max(0, netPayRawH)
 
   const totalPayable = Math.max(0, Math.round((netPay + miscTotal) * 100) / 100)
@@ -3671,6 +3679,11 @@ async function calculateSimpleHourlyPay(
       mpfEmployer: 0, // ★ 老細拍板：時薪無 MPF（另處理）
       mpfRate: 0,
       netPay: Math.round(netPay * 100) / 100,
+      // ★ cwm-payadj-20261017 ②（MD §2.4 時薪 detail）：同月薪路徑同 key
+      adjustments: adj.map(a => ({ id: a.id, amount: a.amount, mpfTiming: a.mpfTiming, reason: a.reason })),
+      adjPreMpf: Math.round(adjPre * 100) / 100,
+      adjPostMpf: Math.round(adjPost * 100) / 100,
+      adjHash,
       netClamped: netClampedH, // ★ 2026-09-30 [cwm-restdebt] RS-15：netPay 被 clamp 到 0 嘅標記（對數用）
       salary: {
         basePay: totalPay,
@@ -3773,6 +3786,13 @@ export async function calculatePayrollWithRules(
   const rsTbDed = rsSettle ? Math.max(0, Number(rsSettle.tbDeduction) || 0) : 0
   // ★ 2026-09-07 [cwm-excessrest]：⑤ 超額休息日扣款（MPF 之前 — 減低基數少供；拍板② s.32(2)(a)）
   const rsExcessRest = rsSettle ? Math.max(0, Number(rsSettle.excessRestDeduction) || 0) : 0
+
+  // ★ cwm-payadj-20261017 ②（MD §2.4.1）：計糧調整 — 掛員工＋月份（唔掛 PayrollItem）。
+  //   adjPre 落 gross（MPF 前＝當工資：影響強積金＋EO 工資）；adjPost 落 MPF 後 net。
+  //   重新生成草稿會重讀呢度 → 調整自動保留。
+  const adj = await loadAdjustments(prisma, employeeId, toHKDateStr(monthDate).slice(0, 7))
+  const { pre: adjPre, post: adjPost, hash: adjHash } = sumAdjustments(adj)
+  // ⚠️ 月份 key 同時薪路徑：toHKDateStr 慣例，唔好用 0-based month 拼。
 
   // 1. Collect work data
   const workData = await collectWorkData(employeeId, monthDate, clinicId)
@@ -4073,7 +4093,9 @@ export async function calculatePayrollWithRules(
 
   result.splitPay = effectiveSplitPay // 顯示與計算統一
   // ★ 2026-09-07 [cwm-excessrest]：⑤ 超額休息日扣款落 gross（MPF 之前；④ 折現唔入 engine — 既有行為 out of scope）
-  const grossPay = result.basePay - result.deduction + result.otPay + effectiveSplitPay + result.attendanceBonus + storeBonus + totalAllowances - sickDeduction.amount + (adwSource ? resolvedAdwAdjustment : 0) + maternityPay + paternityPay + rsGrossAdd - rsExcessRest
+  // ★ cwm-payadj-20261017 ②（MD §2.4.2）：adjPre 加落總薪酬（MPF 前＝當工資）；
+  //   mpfBase 自動跟（= grossPay 或 grossPay − rsGrossAdd），mpfEmployer 同一個 base → 自動一致
+  const grossPay = result.basePay - result.deduction + result.otPay + effectiveSplitPay + result.attendanceBonus + storeBonus + totalAllowances - sickDeduction.amount + (adwSource ? resolvedAdwAdjustment : 0) + maternityPay + paternityPay + rsGrossAdd - rsExcessRest + adjPre
 
   // ★ cwm-resigv3：MPF 基數受 MPF_INCLUDE_SETTLEMENT 控制（false 時 settlement 唔入基數）
   const mpfConfig = resolveMpfConfig(config, mods)
@@ -4090,9 +4112,9 @@ export async function calculatePayrollWithRules(
   const mpf = rsMpfManual ?? calcMPF(mpfBase, mpfConfig, mpfCtx)
   // ★ cwm-resigv3：tbDeduction 落 MPF 後 net 扣除（EO s.32 上限已喺 resign-settle route 驗過）
   // ★ 2026-09-30 [cwm-restdebt] RS-15：扣款大過應付時 netPay 唔准靜靜變 0 —— warn + netClamped 標記俾對數用
-  const netPayRawM = grossPay - mpf - rsTbDed
+  const netPayRawM = grossPay - mpf - rsTbDed + adjPost // ★ cwm-payadj ②：adjPost 落 MPF 後
   const netClampedM = netPayRawM < 0
-  if (netClampedM) console.warn(`[payroll-engine] ⚠️ RS-15 MONTHLY netPay clamped to 0（扣款大過應付）：emp=${employeeId} month=${monthDate} gross=${grossPay} mpf=${mpf} rsTbDed=${rsTbDed} raw=${netPayRawM}`)
+  if (netClampedM) console.warn(`[payroll-engine] ⚠️ RS-15 MONTHLY netPay clamped to 0（扣款大過應付）：emp=${employeeId} month=${monthDate} gross=${grossPay} mpf=${mpf} rsTbDed=${rsTbDed} adjPost=${adjPost} raw=${netPayRawM}`)
   const netPay = Math.max(0, netPayRawM)
   // ★ 2026-09-01 (cwm-mpf-20260902, MD #11)：MPF disabled 時 mpfRate 顯示 0 ——
   //   config.mpf 可以係 {enabled:false, rate:0.05}（UI 取消勾選喺度寫 rate），
@@ -4112,6 +4134,13 @@ export async function calculatePayrollWithRules(
     mpfEmployer: calcMpfEmployer(mpfBase, mpfConfig, mpfCtx),
     mpfRate: mpfRate,
     netPay: Math.round(netPay * 100) / 100,
+    // ★ cwm-payadj-20261017 ②（MD §2.4.8）：計糧調整落 detailJson —
+    //   糧單 PDF 逐行「調整：原因 ±金額」、匯出兩欄、草稿過期偵測（adjHash）全讀呢度。
+    //   無調整 = [] / 0 / ADJ_EMPTY_HASH（舊 detailJson 冇呢幾個 key = 本單之前嘅單）。
+    adjustments: adj.map(a => ({ id: a.id, amount: a.amount, mpfTiming: a.mpfTiming, reason: a.reason })),
+    adjPreMpf: Math.round(adjPre * 100) / 100,
+    adjPostMpf: Math.round(adjPost * 100) / 100,
+    adjHash,
     netClamped: netClampedM, // ★ 2026-09-30 [cwm-restdebt] RS-15：netPay 被 clamp 到 0 嘅標記（對數用）
     sickDeduction: sickDeduction.amount,
     sickEpisodes: sickDeduction.episodes,
@@ -4168,7 +4197,7 @@ export async function calculatePayrollWithRules(
     const oldOtPay = result.otPay
     result.otPay = Math.round(result.otHours * hourlyEquivalent * otMultiplier * 100) / 100
     const grossPayDelta = result.otPay - oldOtPay
-    const oldGrossPay = (result.detail as any).grossPay ?? (result.basePay - result.deduction + oldOtPay + effectiveSplitPay + result.attendanceBonus + rsGrossAdd - rsExcessRest)
+    const oldGrossPay = (result.detail as any).grossPay ?? (result.basePay - result.deduction + oldOtPay + effectiveSplitPay + result.attendanceBonus + rsGrossAdd - rsExcessRest + adjPre) // ★ cwm-payadj ②：fallback 式包 adjPre（detail.grossPay 已經包，但 fallback 都要啱）
     const newGrossPay = oldGrossPay + grossPayDelta
     const mpfConfig = resolveMpfConfig(config, mods)
     // ★ cwm-resigv3：OT 重算同步 settlement 口徑（MPF 基數 + tbDeduction），
@@ -4178,7 +4207,9 @@ export async function calculatePayrollWithRules(
     const newMpf = rsMpfManual ?? calcMPF(newMpfBase, mpfConfig, mpfCtx)
     // ★ cwm-payrollcols-20260918 坑⑥：OT 重算後僱主 MPF 都要同步（否則保留舊值）
     const newMpfEmployer = calcMpfEmployer(newMpfBase, mpfConfig, mpfCtx)
-    const newNetPay = Math.max(0, newGrossPay - newMpf - rsTbDed)
+    // ★ cwm-payadj-20261017 ②（MD §2.4.5，生死點）：OT 重算覆寫 netPay —
+    //   漏咗 + adjPost，有 OT 嘅月薪員工調整會靜靜消失（MD 明列回歸點）。
+    const newNetPay = Math.max(0, newGrossPay - newMpf - rsTbDed + adjPost)
     result.totalPayable = newNetPay
     result.detail = {
       ...result.detail,
@@ -4379,6 +4410,8 @@ export async function calculatePayrollWithRules(
       //   → 離職月份一定報「[grossPay] 逐項加總對唔上」
       + rsGrossAdd
       - rsExcessRest
+      // ★ cwm-payadj-20261017 ②：MPF 前調整同入 grossPay — 唔加呢度會每單真報
+      + adjPre
     if (Math.abs(itemised - finalGrossPay) > 0.05) {
       console.warn(
         `[grossPay] 逐項加總對唔上 detail.grossPay：` +

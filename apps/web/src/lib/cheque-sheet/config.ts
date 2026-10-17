@@ -39,6 +39,7 @@ export const SHEET_COLS: SheetCol[] = [
   { key: 'maternityPay',        label: '產假／侍產假',        header: '產假/侍產假',    kind: 'money' },
   { key: 'adwAdjustment',       label: 'ADW 調整',            header: 'ADW 調整',       kind: 'money' },
   { key: 'storeBonus',          label: '店舖獎金',            header: '店舖獎金',       kind: 'money' },
+  { key: 'adjPreMpf',           label: '調整（MPF前）',       header: 'Adj (MPF前)',    kind: 'money' }, // ★ cwm-payadj ②（可選欄；LEGACY 唔含）
   { key: 'grossPay',            label: 'Gross（Salary）',     header: 'Salary',         kind: 'money' },
   { key: 'mpf',                 label: 'MPF（僱員）',         header: 'MPF',            kind: 'money' },
   { key: 'mpfEmployer',         label: 'MPF（僱主）',         header: 'MPF（僱主）',    kind: 'money' },
@@ -46,6 +47,7 @@ export const SHEET_COLS: SheetCol[] = [
   { key: 'tbCashout',           label: '時間帳戶折現',        header: '時間帳戶折現',   kind: 'money' },
   { key: 'rsGrossAdd',          label: '離職結算加項',        header: '離職結算加項',   kind: 'money' },
   { key: 'excessRestDeduction', label: '超額休息日扣減',      header: '超額休息日扣減', kind: 'money' },
+  { key: 'adjPostMpf',          label: '調整（MPF後）',       header: 'Adj (MPF後)',    kind: 'money' }, // ★ cwm-payadj ②（可選欄；LEGACY 唔含）
   { key: 'netPay',              label: '實發（Net Pay）',     header: 'Net Pay',        kind: 'money' },
   { key: 'miscAmount',          label: '雜項報銷（FARE）',    header: 'FARE',           kind: 'money' },
   { key: 'totalPayable',        label: '應付總額（Total）',   header: 'Total',          kind: 'money' },

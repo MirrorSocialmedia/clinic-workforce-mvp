@@ -60,6 +60,19 @@ const fakes: Record<string, Any> = {
   shift: { findMany: async () => [] },
   punchRecord: { findMany: async () => PUNCHES },
   punchCorrection: { findMany: async () => [] },
+  // ★ cwm-payadj ② + base 遺漏補上（2026-09-30 engine 加咗 lunchDeductOverride；
+  //   時薪路徑仲會讀以下 delegate — 冇 fake 就會打到真 client 炸 DATABASE_URL）
+  payrollAdjustment: { findMany: async () => [] },
+  lunchDeductOverride: { findFirst: async () => null, findMany: async () => [] },
+  employee: { findUnique: async () => ({ id: EMP, name: 'Hourly', joinDate: null, resignedAt: null, clinics: [] }) },
+  payRule: { findFirst: async () => null },
+  hKPublicHoliday: { findMany: async () => [], count: async () => 0 },
+  leaveRequest: { findMany: async () => [] },
+  timeBank: { findFirst: async () => null, upsert: async () => ({}) },
+  timeBankEntry: { findMany: async () => [], findFirst: async () => null },
+  expenseEntry: { findMany: async () => [] },
+  consultationRevenue: { findFirst: async () => null },
+  resignSettlement: { findFirst: async () => null },
 }
 
 before(() => {

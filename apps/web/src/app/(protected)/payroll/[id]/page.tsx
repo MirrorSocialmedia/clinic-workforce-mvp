@@ -39,6 +39,8 @@ interface PayrollItem {
   chequeNo: string | null
   detailJson: string | null
   confidential?: boolean
+  // ★ cwm-payadj-20261017 ②：調整過期偵測（API 回傳；黃字提示）
+  adjStale?: boolean
   employee: {
     user: { name: string; phone: string }
     clinics: { clinicId: string; clinic: { name: string } }[]
@@ -127,6 +129,8 @@ const COL_OPTIONS: Array<{ key: string; label: string; required?: boolean }> = [
   { key: 'deduction', label: '扣款' },
   { key: 'sickDeduction', label: '病假扣減' },
   { key: 'misc', label: '雜項($)' },
+  // ★ cwm-payadj-20261017 ②（MD §2.6）：「調整」欄 — pre+post 合計，滑鼠停顯示明細；adjStale 黃字（預設關）
+  { key: 'adjustments', label: '調整' },
   { key: 'totalPayable', label: '應付總額', required: true },
   // ★ cwm-payrollsheet-20260921 S3：支票號（可選欄；預設唔開 — 入 ⚙️ 顯示欄位開）
   { key: 'chequeNo', label: '支票號' },
@@ -853,6 +857,10 @@ export default function PayrollDetailPage() {
                       {item.employee.status === 'RESIGNED' && (
                         <span style={{ marginLeft: 6, background: '#f59e0b', color: '#fff', borderRadius: 4, padding: '1px 5px', fontSize: 10, fontWeight: 600 }}>離職</span>
                       )}
+                      {/* ★ cwm-payadj-20261017 ②（MD §2.5）：調整有改動未重算 — 黃字（唔受「調整」欄開關影響） */}
+                      {item.adjStale && (
+                        <span title="調整有改動，請重新生成" style={{ marginLeft: 6, color: '#b45309', fontSize: 11, fontWeight: 700 }}>⚠️ 調整有改動</span>
+                      )}
                     </div>
                     <div style={{ fontSize: 11, color: '#888' }}>
                       {item.employee.user.phone}
@@ -933,6 +941,32 @@ export default function PayrollDetailPage() {
                   <td key="misc" style={{ padding: '8px 6px', textAlign: 'right', fontFamily: 'monospace', color: '#059669' }}
                     title={item.miscDetailJson ? JSON.parse(item.miscDetailJson).map((d: any) => `${d.description} $${d.amount}`).join('\n') : undefined}>
                     {item.miscAmount ? `+${item.miscAmount.toLocaleString()}` : '+0'}
+                  </td>
+                ),
+                adjustments: (
+                  <td key="adjustments" style={{ padding: '8px 6px', textAlign: 'right', fontFamily: 'monospace' }}>
+                    {confidential ? (
+                      <span style={{ color: '#888', fontSize: 12 }}>🔒</span>
+                    ) : (() => {
+                      let d: any = {}
+                      try { d = JSON.parse(item.detailJson || '{}') } catch { d = {} }
+                      const pre = Number(d.adjPreMpf ?? 0)
+                      const post = Number(d.adjPostMpf ?? 0)
+                      const adjList: any[] = Array.isArray(d.adjustments) ? d.adjustments : []
+                      const total = Math.round((pre + post) * 100) / 100
+                      const title = adjList.length
+                        ? adjList.map((a: any) => `${a.reason} ${a.amount >= 0 ? '+' : '−'}${Math.abs(Number(a.amount)).toFixed(2)}（MPF ${a.mpfTiming === 'PRE_MPF' ? '前' : '後'}）`).join('\n')
+                        : undefined
+                      if (adjList.length === 0) return <span style={{ color: '#ccc' }}>—</span>
+                      // ★ MD §2.6：adjStale 黃字（改咗調整未重算）
+                      return (
+                        <span title={title}
+                          style={{ color: item.adjStale ? '#b45309' : (total >= 0 ? '#059669' : '#dc3545'), fontWeight: item.adjStale ? 700 : 400 }}>
+                          {item.adjStale && <span title="調整有改動，請重新生成">⚠️ </span>}
+                          {total >= 0 ? '+' : '−'}{Math.abs(total).toFixed(2)}
+                        </span>
+                      )
+                    })()}
                   </td>
                 ),
                 totalPayable: (

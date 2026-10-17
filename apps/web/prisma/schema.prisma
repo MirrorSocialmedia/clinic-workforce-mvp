@@ -261,6 +261,7 @@ model Employee {
   timeBankEntries          TimeBankEntry[]
   timeBankLedgers          TimeBankLedgerSnapshot[]
   payrollItems             PayrollItem[]
+  payrollAdjustments       PayrollAdjustment[] // ★ cwm-payadj-20261017 ②：計糧調整（MPF 前／後）
   expenseEntries           ExpenseEntry[]
   faceTemplates            FaceTemplate[]
   auditTargets             AuditLog[]               @relation("AuditTarget")
@@ -1029,6 +1030,34 @@ model TimeBankEntry {
   //   另有 3 個 partial unique（20260921000000）：RESTDAY_GRANT / MAKEUP / EARLY_IN_OT。
 
   @@index([employeeId, date])
+}
+
+// ============================================================
+// Payroll Adjustment — 計糧調整（MPF 前／MPF 後）
+// ★ cwm-payadj-20261017 ②
+// ============================================================
+
+/// ★ 計糧調整：掛員工＋月份（唔掛 PayrollItem），重新生成草稿唔會清走
+///   amount 正負號即加／減（正 = 加，負 = 減）；mpfTiming 決定喺強積金之前／之後落。
+///   用 Decimal 唔用 Float：人手輸入嘅錢，入引擎先 Number(x) + round2。
+///   註：MD 原文 relation 冇寫 onDelete；與同級 Employee relation（PayrollItem／TimeBankEntry）
+///   一致補上 onDelete: Cascade（員工 purge 時唔會卡死），餘下欄逐字同 MD §2.2。
+model PayrollAdjustment {
+  id          String    @id @default(cuid())
+  employeeId  String
+  employee    Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  periodMonth String    // 'YYYY-MM'
+  amount      Decimal   @db.Decimal(12, 2) // 有正負：正 = 加，負 = 減
+  mpfTiming   String    // 'PRE_MPF' | 'POST_MPF'
+  reason      String
+  createdBy   String
+  createdAt   DateTime  @default(now())
+  updatedBy   String?
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime? // 軟刪除：審計睇得返
+  deletedBy   String?
+
+  @@index([employeeId, periodMonth])
 }
 
 // ============================================================

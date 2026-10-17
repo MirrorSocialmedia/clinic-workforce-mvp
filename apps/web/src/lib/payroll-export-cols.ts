@@ -39,7 +39,10 @@ export const EXPORT_COLS: ExportCol[] = [
   { key: 'mpfEmployer',     label: 'MPF（僱主）' },
   { key: 'miscAmount',      label: '雜項' },
   { key: 'storeBonus',      label: '店舖獎金' },
+  // ★ cwm-payadj-20261017 ②：計糧調整兩欄（MD §2.6 — 預設開，MD §2.6 明令入 :61 數字欄清單）
+  { key: 'adjPreMpf',       label: '調整（MPF前）' },
   { key: 'grossPay',        label: 'Gross' },
+  { key: 'adjPostMpf',      label: '調整（MPF後）' },
   { key: 'rsGrossAdd',      label: '離職結算加項' },
   { key: 'excessRestDeduction', label: '超額休息日扣減' },
   { key: 'tbDeduction',     label: '時間帳戶欠款扣減' },
@@ -59,6 +62,7 @@ export const EXPORT_COLS_DEFAULT: string[] = [
   'basePay', 'otPay', 'splitPay', 'deduction', 'sickDeduction',
   'attendanceBonus', 'totalAllowances', 'maternityPay', 'adwAdjustment',
   'mpf', 'mpfEmployer', 'miscAmount', 'storeBonus',
-  'grossPay', 'rsGrossAdd', 'excessRestDeduction', 'tbDeduction', 'tbCashout',
+  'adjPreMpf', 'grossPay', 'adjPostMpf',
+  'rsGrossAdd', 'excessRestDeduction', 'tbDeduction', 'tbCashout',
   'totalPayable',
 ]

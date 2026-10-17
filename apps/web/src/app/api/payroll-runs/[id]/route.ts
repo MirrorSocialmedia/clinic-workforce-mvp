@@ -17,6 +17,8 @@ import { restDayBalanceAsOf } from '@/lib/leave-balance-as-of'
 // ★ cwm-tbledger-20260909 C1：finalize 凍結時間帳戶帳本（同讀取側總覽用同一個 builder）
 import { buildTimeBankLedger } from '@/lib/timebank-ledger'
 import { TIMEBANK_ENGINE_VERSION } from '@/lib/payroll-engine'
+// ★ cwm-payadj-20261017 ②：草稿過期偵測（live hash vs detail.adjHash）
+import { loadAdjustmentsByEmployees, adjHashOf } from '@/lib/payroll/adjustments'
 
 // ★ cwm-payrollcols-20260918 B4：detailJson 安全 parse（舊記錄可能係壞 JSON → null）
 function safeParse(json: string | null | undefined): any {
@@ -99,6 +101,24 @@ export async function GET(
     })(),
   }))
 
+  // ★ cwm-payadj-20261017 ②（MD §2.5 草稿過期偵測）：每個 item 比 live sumAdjustments().hash
+  //   vs detail.adjHash — 唔同 = 改咗調整未重算 → adjStale: true（計糧單頁黃字 + finalize 擋）。
+  //   舊 item（本單之前生成，detailJson 冇 adjHash key）：無調整 = 唔算 stale（唔擋舊草稿）；
+  //   有調整 = stale（要重新生成先入到新 hash）。
+  const runYm = periodMonthKey(run.periodMonth)
+  const adjByEmp = await loadAdjustmentsByEmployees(prisma, items.map((it: any) => it.employeeId), runYm)
+  const itemsWithAdj = itemsWithSickDeduction.map((it: any) => {
+    const d = safeParse(it.detailJson) ?? {}
+    const rows = adjByEmp.get(it.employeeId) ?? []
+    const storedHash: string | null = typeof d.adjHash === 'string' ? d.adjHash : null
+    return {
+      ...it,
+      adjStale: storedHash == null ? rows.length > 0 : adjHashOf(rows) !== storedHash,
+      adjPreMpf: typeof d.adjPreMpf === 'number' ? d.adjPreMpf : 0,
+      adjPostMpf: typeof d.adjPostMpf === 'number' ? d.adjPostMpf : 0,
+    }
+  })
+
   // ★ Totals recalculated from visible items only (prevents reverse-engineering)
   const summary = {
     totalEmployees: itemsWithSickDeduction.length,
@@ -172,7 +192,7 @@ export async function GET(
   }
 
   return NextResponse.json({
-    run: { ...run, items: itemsWithSickDeduction },
+    run: { ...run, items: itemsWithAdj },
     summary,
     // ★ 2026-09-10 cwm-payrollui：自訂顯示設定（跨店 run clinicId=null → 冇 company → null = 預設顯示）
     company: run.clinic?.company ? {
@@ -260,6 +280,25 @@ export async function PUT(
         const failedN = await prisma.payrollItem.count({ where: { runId: params.id, detailJson: { startsWith: '{"error":' } } })
         if (failedN > 0) {
           return NextResponse.json({ error: `${failedN} 位員工計糧失敗（$0 佔位），請重新產生計糧單先確認`, code: 'HAS_FAILED_ITEMS' }, { status: 409 })
+        }
+
+        // ★ cwm-payadj-20261017 ②（MD §2.5 finalize gate）：任何 item 調整有改動但未重算
+        //   → 409 PAYROLL_ADJ_STALE，防「改咗調整但草稿未重算就出糧」。
+        //   同一把尺同 GET run 嘅 adjStale（live hash vs detail.adjHash）。
+        const allItems = await prisma.payrollItem.findMany({
+          where: { runId: params.id },
+          select: { employeeId: true, detailJson: true },
+        })
+        const gateYm = periodMonthKey(run.periodMonth)
+        const gateAdj = await loadAdjustmentsByEmployees(prisma, allItems.map(i => i.employeeId), gateYm)
+        const staleN = allItems.filter(it => {
+          const d = safeParse(it.detailJson) ?? {}
+          const rows = gateAdj.get(it.employeeId) ?? []
+          const stored: string | null = typeof d.adjHash === 'string' ? d.adjHash : null
+          return stored == null ? rows.length > 0 : adjHashOf(rows) !== stored
+        }).length
+        if (staleN > 0) {
+          return NextResponse.json({ error: `${staleN} 位員工嘅計糧調整有改動但草稿未重算，請重新生成計糧先確認`, code: 'PAYROLL_ADJ_STALE' }, { status: 409 })
         }
       }
 

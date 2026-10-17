@@ -91,6 +91,8 @@ const fakes: Record<string, any> = {
   timeBankEntry: { findMany: async () => [], findFirst: async () => null },
   expenseEntry: { findMany: async () => [] },
   consultationRevenue: { findFirst: async () => null },
+  // ★ cwm-payadj ②：engine 每月必查調整（呢個 test 冇調整行 → 空）
+  payrollAdjustment: { findMany: async () => [] },
   payRule: {
     findFirst: async () => ({
       id: 'rule-pl-test',

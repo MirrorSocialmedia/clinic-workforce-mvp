@@ -146,6 +146,9 @@ function exportToExcel(run: any, periodMonth: string, clinicName: string): NextR
       case 'adwAdjustment': return Number((detail.adwAdjustment ?? 0).toFixed(2))
       case 'mpf': return Number((detail.mpf ?? 0).toFixed(2))
       case 'mpfEmployer': return Number((detail.mpfEmployer ?? 0).toFixed(2))
+      // ★ cwm-payadj-20261017 ②：計糧調整兩欄（引擎 detail 頂層 key，check-detail-keys.sh 對得上）
+      case 'adjPreMpf': return Number((detail.adjPreMpf ?? 0).toFixed(2))
+      case 'adjPostMpf': return Number((detail.adjPostMpf ?? 0).toFixed(2))
       case 'miscAmount': return Number((item.miscAmount ?? 0).toFixed(2))
       case 'storeBonus': return Number((item.storeBonus ?? 0).toFixed(2))
       case 'grossPay': return Number((detail.grossPay ?? 0).toFixed(2))
@@ -172,7 +175,7 @@ function exportToExcel(run: any, periodMonth: string, clinicName: string): NextR
     basePay: 12, otPay: 10, splitPay: 10, sickDeduction: 12,
     attendanceBonus: 10, totalAllowances: 10, maternityPay: 12, adwAdjustment: 10,
     storeBonus: 12, deduction: 10,
-    grossPay: 12, mpf: 12, mpfEmployer: 12, rsGrossAdd: 12, excessRestDeduction: 14,
+    grossPay: 12, mpf: 12, mpfEmployer: 12, adjPreMpf: 12, adjPostMpf: 12, rsGrossAdd: 12, excessRestDeduction: 14,
     tbDeduction: 14, tbCashout: 12, miscAmount: 10, totalPayable: 14,
   }
 

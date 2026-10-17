@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback, useRef } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { fmtDateTime, fmtDate, fmtTime, toHKDateStr, getMonthRange, fmtDMY, periodMonthKey } from '@/lib/hk-date'
+import { hasPermission } from '@/lib/permissions'
 import { describeBasePay } from '@/lib/base-pay-breakdown'
 import { punchLabel, punchColor } from '@/lib/punch-label'
 import { LEAVE_SYSTEM_KEYS } from '@/lib/leave-types'
@@ -74,6 +75,158 @@ function CollapsibleSection({ trigger, children }: { trigger: React.ReactNode; c
   )
 }
 
+// ============================================================
+// ★ cwm-payadj-20261017 ②：計糧調整 modal（MD §2.6 UI）
+//   加／減分段掣、金額、原因、兩個 radio（文字照圖示）。
+//   切換加／減時，若用戶未手動揀過 radio，就照預設轉（加→MPF 前；減→MPF 後）。
+// ============================================================
+function AdjModal({
+  runId, empId, mode, row, onClose, onSaved,
+}: {
+  runId: string
+  empId: string
+  mode: 'create' | 'edit'
+  row?: { id: string; amount: number; mpfTiming: string; reason: string }
+  onClose: () => void
+  onSaved: (recalcErr?: string) => void
+}) {
+  const [sign, setSign] = useState<'ADD' | 'DEDUCT'>(row ? (row.amount >= 0 ? 'ADD' : 'DEDUCT') : 'ADD')
+  const [amount, setAmount] = useState(row ? String(Math.abs(row.amount)) : '')
+  const [reason, setReason] = useState(row?.reason ?? '')
+  const [timing, setTiming] = useState<'PRE_MPF' | 'POST_MPF'>(
+    (row?.mpfTiming as 'PRE_MPF' | 'POST_MPF') ?? 'PRE_MPF',
+  )
+  const [timingTouched, setTimingTouched] = useState(!!row)
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+
+  const pickSign = (s: 'ADD' | 'DEDUCT') => {
+    setSign(s)
+    if (!timingTouched) setTiming(s === 'ADD' ? 'PRE_MPF' : 'POST_MPF') // 預設跟加／減
+  }
+  const pickTiming = (t: 'PRE_MPF' | 'POST_MPF') => {
+    setTimingTouched(true)
+    setTiming(t)
+  }
+
+  const submit = async () => {
+    setBusy(true)
+    setErr('')
+    try {
+      const body = { amount: Number(amount), sign, mpfTiming: timing, reason: reason.trim() }
+      const r = await fetch(
+        mode === 'create'
+          ? `/api/payroll-runs/${runId}/employee/${empId}/adjustments`
+          : `/api/payroll-runs/${runId}/employee/${empId}/adjustments/${row!.id}`,
+        {
+          method: mode === 'create' ? 'POST' : 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        },
+      )
+      const d = await r.json().catch(() => ({}))
+      if (!r.ok) { setErr(d.error || `HTTP ${r.status}`); return }
+      onSaved(d.recalcError)
+    } catch (e: any) {
+      setErr(e?.message || '儲存失敗')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const remove = async () => {
+    if (!window.confirm('確定刪咗呢行調整？（會重算）')) return
+    setBusy(true)
+    setErr('')
+    try {
+      const r = await fetch(
+        `/api/payroll-runs/${runId}/employee/${empId}/adjustments/${row!.id}`,
+        { method: 'DELETE' },
+      )
+      const d = await r.json().catch(() => ({}))
+      if (!r.ok) { setErr(d.error || `HTTP ${r.status}`); return }
+      onSaved(d.recalcError)
+    } catch (e: any) {
+      setErr(e?.message || '刪除失敗')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const fmt = (n: number) => n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.4)' }} onClick={onClose}>
+      <div className="bg-white rounded-lg shadow-xl w-full max-w-md p-5 space-y-4" onClick={e => e.stopPropagation()}>
+        <h3 className="font-semibold">{mode === 'create' ? '新增計糧調整' : '修改計糧調整'}</h3>
+
+        {/* 加／減分段掣 */}
+        <div className="grid grid-cols-2 gap-1 rounded-md overflow-hidden border" style={{ borderColor: '#d1d5db' }}>
+          {(['ADD', 'DEDUCT'] as const).map(s => (
+            <button key={s} type="button" onClick={() => pickSign(s)}
+              className="py-1.5 text-sm font-medium" style={sign === s
+                ? { background: s === 'ADD' ? '#16a34a' : '#dc2626', color: '#fff' }
+                : { background: '#fff', color: '#374151' }}>
+              {s === 'ADD' ? '＋ 加' : '－ 減'}
+            </button>
+          ))}
+        </div>
+
+        {/* 金額 */}
+        <div>
+          <label className="text-sm text-muted-foreground">金額</label>
+          <input type="number" min="0" step="0.01" value={amount} onChange={e => setAmount(e.target.value)}
+            className="mt-1 w-full border rounded px-2 py-1.5 font-mono" placeholder="0.00" />
+        </div>
+
+        {/* 原因（必填 — 會印喺糧單） */}
+        <div>
+          <label className="text-sm text-muted-foreground">原因（必填，會印喺糧單）</label>
+          <input type="text" maxLength={200} value={reason} onChange={e => setReason(e.target.value)}
+            className="mt-1 w-full border rounded px-2 py-1.5" placeholder="例：上個月差額補回" />
+        </div>
+
+        {/* 計法 radio（文字照圖示） */}
+        <div className="space-y-1.5">
+          <label className="flex items-start gap-2 rounded-md border p-2 cursor-pointer"
+            style={{ borderColor: timing === 'PRE_MPF' ? '#16a34a' : '#e5e7eb', background: timing === 'PRE_MPF' ? '#f0fdf4' : '#fff' }}>
+            <input type="radio" checked={timing === 'PRE_MPF'} onChange={() => pickTiming('PRE_MPF')} className="mt-1" />
+            <span>
+              <span className="text-sm font-medium">MPF 前（當工資）</span>
+              <span className="block text-xs text-muted-foreground">加落總薪酬 → 影響強積金、EO 工資（ADW）</span>
+            </span>
+          </label>
+          <label className="flex items-start gap-2 rounded-md border p-2 cursor-pointer"
+            style={{ borderColor: timing === 'POST_MPF' ? '#dc2626' : '#e5e7eb', background: timing === 'POST_MPF' ? '#fef2f2' : '#fff' }}>
+            <input type="radio" checked={timing === 'POST_MPF'} onChange={() => pickTiming('POST_MPF')} className="mt-1" />
+            <span>
+              <span className="text-sm font-medium">MPF 後（唔當工資）</span>
+              <span className="block text-xs text-muted-foreground">計完強積金先加／減 → 唔影響強積金、唔計 EO 工資</span>
+            </span>
+          </label>
+        </div>
+
+        {err && <div className="text-sm text-red-600">{err}</div>}
+
+        <div className="flex items-center justify-between pt-1">
+          {mode === 'edit' ? (
+            <button type="button" onClick={remove} disabled={busy} className="text-sm text-red-600 hover:underline disabled:opacity-50">
+              刪除呢行
+            </button>
+          ) : <span />}
+          <div className="flex gap-2">
+            <button type="button" onClick={onClose} disabled={busy} className="px-3 py-1.5 text-sm border rounded-md hover:bg-gray-50 disabled:opacity-50">取消</button>
+            <button type="button" onClick={submit} disabled={busy}
+              className="px-4 py-1.5 text-sm rounded-md text-white disabled:opacity-50" style={{ background: '#2563eb' }}>
+              {busy ? '儲存中…' : '儲存'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function EmployeePayrollDetailPage() {
   const params = useParams()
   const router = useRouter()
@@ -90,6 +243,15 @@ export default function EmployeePayrollDetailPage() {
   // ★ cwm-bulkpayslip-20261003：?embed=1 = 一鍵匯出用嘅隱藏 iframe（唔跳頁、齊數據後掛 handle）
   const [embed, setEmbed] = useState(false)
   const [leaveLoaded, setLeaveLoaded] = useState(false)
+
+  // ★ cwm-payadj-20261017 ②：計糧調整（行 + stale + modal）
+  const [userRole, setUserRole] = useState('')
+  const [grant, setGrant] = useState<string[]>([])
+  const [deny, setDeny] = useState<string[]>([])
+  const [adjRows, setAdjRows] = useState<any[]>([])
+  const [adjStale, setAdjStale] = useState(false)
+  const [adjMsg, setAdjMsg] = useState<{ type: 'ok' | 'err'; text: string } | null>(null)
+  const [adjModal, setAdjModal] = useState<null | { mode: 'create' } | { mode: 'edit'; row: any }>(null)
   useEffect(() => {
     try { setEmbed(new URLSearchParams(window.location.search).get('embed') === '1') } catch { /* SSR／舊瀏覽器 */ }
   }, [])
@@ -131,6 +293,37 @@ export default function EmployeePayrollDetailPage() {
   useEffect(() => {
     fetchData()
   }, [fetchData])
+
+  // ★ cwm-payadj-20261017 ②：role（決定「＋ 新增調整」顯隱）+ 調整行（live — stale 時先喺度睇到改動）
+  useEffect(() => {
+    fetch('/api/me').then(r => {
+      if (!r.ok) return
+      r.json().then((d: any) => {
+        setUserRole(d.user?.role || '')
+        setGrant(Array.isArray(d.user?.grant) ? d.user.grant : [])
+        setDeny(Array.isArray(d.user?.deny) ? d.user.deny : [])
+      }).catch(() => {})
+    }).catch(() => {})
+  }, [])
+
+  const fetchAdj = useCallback(async () => {
+    try {
+      const r = await fetch(`/api/payroll-runs/${runId}/employee/${empId}/adjustments`, { cache: 'no-store' })
+      if (!r.ok) { setAdjRows([]); setAdjStale(false); return }
+      const d = await r.json()
+      setAdjRows(Array.isArray(d.adjustments) ? d.adjustments : [])
+      setAdjStale(!!d.adjStale)
+    } catch { setAdjRows([]); setAdjStale(false) }
+  }, [runId, empId])
+
+  useEffect(() => {
+    if (data?.item) fetchAdj()
+  }, [data?.item?.id, fetchAdj])
+
+  const canEditAdj =
+    !!data?.item &&
+    data.item.run?.status === 'DRAFT' &&
+    (userRole === 'OWNER' || hasPermission(userRole as any, 'payroll_generate', grant, deny)) // ROLE-OK: 同計糧生成同一把尺
 
   // Fetch leave balances from API (authentic source — same as 假期管理)
   // ★ 年假係累積 row (year=0)，唔可以按曆年過濾。
@@ -935,6 +1128,27 @@ export default function EmployeePayrollDetailPage() {
               </div>
             )}
 
+            {/* ★ cwm-payadj-20261017 ②（MD §2.6）：MPF 前調整 — 喺「應發 (Gross)」之上，綠底＋MPF 前 pill */}
+            {adjStale && (
+              <div className="text-xs rounded px-2 py-1.5" style={{ background: '#fffbeb', border: '1px solid #fcd34d', color: '#92400e' }}>
+                ⚠️ 調整有改動，請重新生成
+              </div>
+            )}
+            {adjRows.filter((a: any) => a.mpfTiming === 'PRE_MPF').map((a: any) => (
+              <div key={a.id}
+                className={`flex justify-between items-center rounded px-2 py-1.5 ${canEditAdj ? 'cursor-pointer hover:opacity-80' : ''}`}
+                style={{ background: '#f0fdf4', border: '1px solid #bbf7d0' }}
+                onClick={canEditAdj ? () => { setAdjModal({ mode: 'edit', row: a }); setAdjMsg(null) } : undefined}>
+                <span className="text-sm">
+                  調整：{a.reason}
+                  <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full font-medium align-middle" style={{ background: '#dcfce7', color: '#166534' }}>MPF 前</span>
+                </span>
+                <span className="font-mono font-medium" style={{ color: a.amount >= 0 ? '#16a34a' : '#dc2626' }}>
+                  {a.amount >= 0 ? '+' : '−'}{fmtCurrency(Math.abs(a.amount))}
+                </span>
+              </div>
+            ))}
+
             {/* Gross Pay */}
             <div className="flex justify-between items-center border-t pt-2 mt-2 font-semibold">
               <span>應發 (Gross)</span>
@@ -948,6 +1162,22 @@ export default function EmployeePayrollDetailPage() {
                 <span className="font-mono font-medium">-{fmtCurrency(mpf)}</span>
               </div>
             )}
+
+            {/* ★ cwm-payadj-20261017 ②（MD §2.6）：MPF 後調整 — 喺強積金之下，紅底＋MPF 後 pill */}
+            {adjRows.filter((a: any) => a.mpfTiming === 'POST_MPF').map((a: any) => (
+              <div key={a.id}
+                className={`flex justify-between items-center rounded px-2 py-1.5 ${canEditAdj ? 'cursor-pointer hover:opacity-80' : ''}`}
+                style={{ background: '#fef2f2', border: '1px solid #fecaca' }}
+                onClick={canEditAdj ? () => { setAdjModal({ mode: 'edit', row: a }); setAdjMsg(null) } : undefined}>
+                <span className="text-sm">
+                  調整：{a.reason}
+                  <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full font-medium align-middle" style={{ background: '#fee2e2', color: '#991b1b' }}>MPF 後</span>
+                </span>
+                <span className="font-mono font-medium" style={{ color: a.amount >= 0 ? '#16a34a' : '#dc2626' }}>
+                  {a.amount >= 0 ? '+' : '−'}{fmtCurrency(Math.abs(a.amount))}
+                </span>
+              </div>
+            ))}
 
             {/* Misc Expenses */}
             {(() => {
@@ -1009,6 +1239,25 @@ export default function EmployeePayrollDetailPage() {
                     實用 ${detail.adwUsed?.toFixed(2)}，
                     差額約 ${(((detail.adwRaw ?? 0) - (detail.adwUsed ?? 0)) * 0.8).toFixed(2)}/日）
                   </div>
+                )}
+              </div>
+            )}
+            {/* ★ cwm-payadj-20261017 ②：卡底「＋ 新增調整」＋「N 行調整 · 撳每行可以改／刪」（run 唔係 DRAFT → 掣隱藏，行照顯示） */}
+            {(canEditAdj || adjRows.length > 0) && (
+              <div className="border-t pt-2 mt-3 space-y-1.5">
+                {canEditAdj && (
+                  <button type="button" onClick={() => { setAdjModal({ mode: 'create' }); setAdjMsg(null) }}
+                    className="text-sm font-medium text-blue-600 hover:underline">
+                    ＋ 新增調整
+                  </button>
+                )}
+                {adjRows.length > 0 && (
+                  <div className="text-xs text-muted-foreground">
+                    {adjRows.length} 行調整{canEditAdj ? ' · 撳每行可以改／刪' : ''}
+                  </div>
+                )}
+                {adjMsg && (
+                  <div className="text-xs" style={{ color: adjMsg.type === 'ok' ? '#166534' : '#dc2626' }}>{adjMsg.text}</div>
                 )}
               </div>
             )}
@@ -1522,6 +1771,25 @@ export default function EmployeePayrollDetailPage() {
           </div>
         </div>
       </div>
+
+      {/* ★ cwm-payadj-20261017 ②：調整 modal（喺 printRef 之外 — 唔會入糧單 PDF） */}
+      {adjModal && (
+        <AdjModal
+          runId={runId}
+          empId={empId}
+          mode={adjModal.mode}
+          row={adjModal.mode === 'edit' ? adjModal.row : undefined}
+          onClose={() => setAdjModal(null)}
+          onSaved={(recalcErr) => {
+            setAdjModal(null)
+            setAdjMsg(recalcErr
+              ? { type: 'err', text: '已儲存，草稿未更新，請撳重新生成' }
+              : { type: 'ok', text: '已儲存並重算' })
+            fetchData()
+            fetchAdj()
+          }}
+        />
+      )}
     </div>
   )
 }

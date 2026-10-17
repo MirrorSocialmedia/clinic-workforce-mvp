@@ -34,7 +34,9 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       const COL_KEYS = ['employee', 'clinic', 'payType', 'hours', 'otHours', 'leaveDays',
         'absentDays', 'baseSalary', 'extraIncome', 'deduction', 'sickDeduction', 'misc', 'totalPayable',
         // ★ cwm-payrollsheet-20260921 S3：支票號欄（前端 COL_OPTIONS 同後端兩邊都要加 — totalMpf 教訓）
-        'chequeNo', 'detail']
+        'chequeNo', 'detail',
+        // ★ cwm-payadj-20261017 ②：「調整」欄（同樣兩邊都要加）
+        'adjustments']
       const cards = Array.isArray(body.payrollView.cards)
         ? body.payrollView.cards.filter((k: any) => typeof k === 'string' && CARD_KEYS.includes(k)) : []
       const columns = Array.isArray(body.payrollView.columns)
