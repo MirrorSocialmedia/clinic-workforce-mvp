@@ -38,7 +38,7 @@ export interface SourceStatus {
   error?: string
 }
 
-type SourceClinic = { id: string; name: string; prefixes: string[]; account: string }
+export type SourceClinic = { id: string; name: string; prefixes: string[]; account: string }
 
 const ERROR_TEXT: Record<string, string> = {
   APRICOT_AUTH_EXPIRED: '憑證失效，需要重新授權',
@@ -86,7 +86,7 @@ export function mergeHits(keyword: string, bySource: PatientHit[][], limit = 30,
   return scored.slice(0, limit).map(x => x.h)
 }
 
-function clinicFor(code: string, account: string, clinics: SourceClinic[], labelOf: (account: string) => string): { clinicId: string | null; clinicLabel: string } {
+export function clinicFor(code: string, account: string, clinics: SourceClinic[], labelOf: (account: string) => string): { clinicId: string | null; clinicLabel: string } {
   const mine = clinics.filter(c => c.account === account)
   // 一間店可以有幾個前綴 → 攤開逐個前綴一行（guessClinicByPatientCode 本身由長到短 match）
   const byPrefix = guessClinicByPatientCode(code, mine.flatMap(c => c.prefixes.map(p => ({ id: c.id, shortName: p }))))
