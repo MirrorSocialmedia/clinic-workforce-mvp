@@ -23,9 +23,14 @@ import { PAGE_SIZE, rateLimitMs, type ClinicalCallFn } from './types'
 /** 預設 callFn = 真 Apricot（cookie 三件套 + rotation 已喺 apricotCall 封裝）。
  * ★ cwm-ops P4-6：包 advisory lock（同 sync/write-booking 同一把）— 攞唔到就 500ms 後重試，
  *   最多 20 次；仲係攞唔到 → APRICOT_BUSY（夜跑同 sync 唔好搶 token）。 */
+/** ★ 有 body = POST（fetch 預設 GET，GET + body 會 TypeError — call 未出門已死；stub callFn 唔經 fetch 所以測試捉唔到）。 */
+export function toApricotInit(init?: { body?: string }): RequestInit | undefined {
+  return init?.body ? { method: 'POST', ...init } : init
+}
+
 const defaultCall: ClinicalCallFn = async (path, init) => {
   for (let i = 0; i < 20; i++) {
-    const r = await withApricotLock(async () => ({ v: await apricotCall(path, init) }))
+    const r = await withApricotLock(async () => ({ v: await apricotCall(path, toApricotInit(init)) }))
     if (r) return r.v
     await new Promise(res => setTimeout(res, 500))
   }
