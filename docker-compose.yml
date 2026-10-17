@@ -61,6 +61,14 @@ services:
       LAB_DOC_ENC_KEY: ${LAB_DOC_ENC_KEY}
       LAB_DOC_ENC_KID: ${LAB_DOC_ENC_KID:-k1}
       LAB_DOC_ENC_KEYS_OLD: ${LAB_DOC_ENC_KEYS_OLD:-}
+      # ★ 2026-10-17 wa-inbox 網上預約（WhatsApp Flow）開關 — 以前冇傳入 container，.env 設咗都無效。
+      #   預設 0 = 同舊行為一樣（關）。要開：喺 .env 加 ALLOW_SLOT_CLAIM=1，再 deploy（或 docker compose up -d app）。
+      #   ALLOW_SLOT_CLAIM  ：准 wa-inbox 佔位／commit（G2 閘；wa-inbox 側亦要設同名旗）
+      #   APRICOT_WRITE     ：佔位時自動寫入 Apricot（0 = 留 HELD，前台喺 Apricot 入單後撳確認）
+      #   ALLOW_NEW_PATIENT_WRITE：新客 inline 建檔（行穩舊客先開）
+      ALLOW_SLOT_CLAIM: ${ALLOW_SLOT_CLAIM:-0}
+      APRICOT_WRITE: ${APRICOT_WRITE:-0}
+      ALLOW_NEW_PATIENT_WRITE: ${ALLOW_NEW_PATIENT_WRITE:-0}
     volumes:
       - lab_docs:/data/lab-docs
     networks: [clinic_net]
