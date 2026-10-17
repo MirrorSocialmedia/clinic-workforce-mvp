@@ -213,6 +213,8 @@ function AuditLogsPageInner() {
     'FACE_VERIFY': '人臉驗證',
     // TimeBank / OT actions
     'TIMEBANK_INIT_ADJUST': '初始化時間帳戶',
+    'TIMEBANK_MANUAL_ADJUST': '手動調整時間帳戶',
+    'TIMEBANK_MANUAL_REVERSE': '撤銷手動調整時間帳戶',
     'TIMEBANK_MAKEUP': '補鐘',
     'TIMEBANK_MAKEUP_BATCH': '批量補鐘',
     'TIMEBANK_CONVERT': 'OT換假',
@@ -322,6 +324,8 @@ function AuditLogsPageInner() {
               <option value="VOID_PUNCH">作廢打卡</option>
               <option value="CREATE_PUNCH">補登打卡</option>
               <option value="TIMEBANK_INIT_ADJUST">初始化時間帳戶</option>
+              <option value="TIMEBANK_MANUAL_ADJUST">手動調整時間帳戶</option>
+              <option value="TIMEBANK_MANUAL_REVERSE">撤銷手動調整時間帳戶</option>
               <option value="TIMEBANK_MAKEUP">補鐘</option>
               <option value="TIMEBANK_MAKEUP_BATCH">批量補鐘</option>
               <option value="TIMEBANK_CONVERT">時間帳戶兌換</option>
