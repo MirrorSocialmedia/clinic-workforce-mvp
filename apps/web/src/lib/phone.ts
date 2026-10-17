@@ -13,20 +13,57 @@
 
 import { createHmac } from 'node:crypto';
 
-/** Apricot 原始電話 → E.164 陣列（一個欄位可能有多個號）。 */
+/** 一段（已去除空格／符號，只剩數字同 +）→ E.164；唔合法 → null。 */
+function classifyPhone(s: string): string | null {
+  if (/^\+852\d{8}$/.test(s)) return s;
+  if (/^852\d{8}$/.test(s)) return `+${s}`;
+  if (/^[2-9]\d{7}$/.test(s)) return `+852${s}`; // 香港本地 8 位
+  // ★ cwi-patient-identify-20261017：內地手機 — 86 開頭（無 +）／冇國碼 11 位（1 開頭；香港號只有 8 位唔會撞）
+  if (/^861\d{10}$/.test(s)) return `+${s}`;
+  if (/^1\d{10}$/.test(s)) return `+86${s}`;
+  if (/^\+\d{8,15}$/.test(s)) return s; // 其他國家保留
+  return null;
+}
+
+/** 一段入面用空格分隔咗幾個號（「85291234567 61234567」「9123 4567 6123 4567」）→ 由左至右，
+ *  每次試最長嘅連續幾段合併（最多 4 段）可以成為合法號碼。 */
+function splitSpacedNumbers(seg: string): string[] {
+  const toks = seg.split(/\s+/).map((t) => t.replace(/[^\d+]/g, '')).filter(Boolean);
+  const out: string[] = [];
+  let i = 0;
+  while (i < toks.length) {
+    let used = 0;
+    for (let n = Math.min(4, toks.length - i); n >= 1; n--) {
+      const c = classifyPhone(toks.slice(i, i + n).join(''));
+      if (c) {
+        out.push(c);
+        used = n;
+        break;
+      }
+    }
+    i += used || 1;
+  }
+  return out;
+}
+
+/**
+ * Apricot 原始電話 → E.164 陣列（一個欄位可能有多個號）。
+ *
+ * ★ cwi-patient-identify-20261017（擁有人拍板：多格式都要對得到）：
+ *   - 號內空格／橫線／括號照收：「9123 4567」「+852 9123 4567」「(852) 9123-4567」→ +85291234567
+ *   - 多號：明確分隔符（/ , ; 、 |）先拆；一段入面再有空格分隔嘅多個號亦拆得出
+ *   - 內地手機：+86／86／冇國碼 11 位 → +86…
+ *   舊規格入面已合法嘅寫法輸出不變（固定向量照舊）。改呢度必須同步 wa-inbox src/lib/phone-hash.ts。
+ */
 export function normalizeHkPhones(raw: string | null | undefined): string[] {
   if (!raw) return [];
-  return raw
-    .split(/[\/,;、\s]+/) // 「9123 4567 / 6123 4567」
-    .map((s) => s.replace(/[^\d+]/g, ''))
-    .flatMap((s) => {
-      if (/^\+852\d{8}$/.test(s)) return [s];
-      if (/^852\d{8}$/.test(s)) return [`+${s}`];
-      if (/^\d{8}$/.test(s) && /^[2-9]/.test(s)) return [`+852${s}`]; // 香港本地 8 位
-      if (/^\+\d{8,15}$/.test(s)) return [s]; // 其他國家保留
-      return []; // 唔合法 → 丟
-    })
-    .filter((v, i, a) => a.indexOf(v) === i);
+  const out: string[] = [];
+  for (const seg of raw.split(/[\/,;、|]+/)) {
+    const whole = classifyPhone(seg.replace(/[^\d+]/g, ''));
+    if (whole) out.push(whole);
+    else out.push(...splitSpacedNumbers(seg));
+  }
+  return out.filter((v, i, a) => a.indexOf(v) === i);
 }
 
 /** 多號 hash（follow-up 索引 phoneHashes String[] — wa-inbox 用 hasSome 配對）。 */

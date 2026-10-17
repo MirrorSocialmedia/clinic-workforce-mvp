@@ -316,6 +316,7 @@ export async function syncAvailabilityCacheForClinic(
       patientCode: r.patientCode,
       patientName: r.patientName,
       phoneHash: r.phoneHash,
+      phoneHashes: r.phoneHashes,
       visitReasons: r.visitReasons,
       remarks: r.remarks,
       syncedAt: now,
