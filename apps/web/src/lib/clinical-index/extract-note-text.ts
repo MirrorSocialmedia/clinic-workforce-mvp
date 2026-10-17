@@ -11,7 +11,7 @@
 //    latestTemplate（unit 有負測兜底）。
 // ============================================================
 
-import type { NoteText, NoteTemplateBlock } from './types'
+import type { NoteText, NoteTemplateBlock, NoteRxLine } from './types'
 
 /** Apricot consultation-notes 行（只列本函數用到嘅欄）。 */
 export interface ApricotNoteShape {
@@ -27,19 +27,77 @@ export interface ApricotNoteShape {
   } | null
   /** 🔴 樣板定義（answer.text 永遠空）— 本函數刻意唔讀。 */
   latestTemplate?: unknown
+  /** 處方（cwi-walkin-20261018） */
+  prescriptions?: unknown
   [k: string]: unknown
 }
 
 export function extractNoteText(note: ApricotNoteShape): NoteText {
+  const rx = extractRxLines(note.prescriptions)
+  const withRx = <T extends object>(t: T): T & { rx?: NoteRxLine[] } => (rx.length ? { ...t, rx } : t)
   const flat = ['complaints', 'findings', 'diagnosis', 'actions'] as const;
   if (flat.some((f) => f in note)) {
-    return { kind: 'STANDARD', complaints: note.complaints ?? '', findings: note.findings ?? '',
-             diagnosis: note.diagnosis ?? '', actions: note.actions ?? '' };
+    return withRx({ kind: 'STANDARD' as const, complaints: note.complaints ?? '', findings: note.findings ?? '',
+             diagnosis: note.diagnosis ?? '', actions: note.actions ?? '' });
   }
   const qs = note.storedTemplate?.sections?.flatMap((s) => s.questions ?? []) ?? [];
   const tx: NoteTemplateBlock[] = qs.filter((q) => q.type === 2 && q.answer?.text?.trim())
                .map((q) => ({ label: q.question ?? '', text: (q.answer?.text ?? '').trim() }));
-  return { kind: 'TEMPLATE', templateName: note.storedTemplate?.des ?? null, blocks: tx };
+  return withRx({ kind: 'TEMPLATE' as const, templateName: note.storedTemplate?.des ?? null, blocks: tx });
+}
+
+const str = (v: unknown): string => {
+  if (typeof v === 'number' && Number.isFinite(v)) return String(v)
+  if (typeof v !== 'string') return ''
+  return v.trim()
+}
+/** Apricot 字典物件（{ des, i18n.des['zh-tw'] }）→ 中文優先顯示字；字串原樣。 */
+const label = (v: unknown): string => {
+  if (!v || typeof v !== 'object') return str(v)
+  const o = v as { des?: unknown; name?: unknown; i18n?: { des?: Record<string, unknown> } }
+  return str(o.i18n?.des?.['zh-tw']) || str(o.des) || str(o.name)
+}
+const labels = (v: unknown): string[] => (Array.isArray(v) ? v.map(label).filter(Boolean) : [])
+const DURATION_UNIT: Record<string, string> = { day: '日', week: '星期', month: '個月' }
+
+/**
+ * ★ cwi-walkin-20261018：處方（note.prescriptions[]）→ 每隻藥一行。
+ * 實測結構（擁有人 2026-10-18 提供 consultation-notes/{id} 樣本）：
+ *   drug.des = 藥名；rxDetails[] = { drugDosage, drugFreq, duration, durationUnit, ttlDosage, salesUnit, isPrn, remarks }；
+ *   drugInstrs[]（服法，例如「飯後」）；drugCautions[]（注意，例如「抗生素必須服完整個療程」）；字典物件中文優先。
+ * 零病人資料（只藥名／用法）。
+ */
+export function extractRxLines(prescriptions: unknown): NoteRxLine[] {
+  if (!Array.isArray(prescriptions)) return []
+  const out: NoteRxLine[] = []
+  for (const p of prescriptions) {
+    if (!p || typeof p !== 'object') continue
+    const it = p as Record<string, any>
+    const name = label(it.drug) || str(it.drug?.drugLabel)
+    if (!name) continue
+    const parts: string[] = []
+    for (const d of Array.isArray(it.rxDetails) ? it.rxDetails : []) {
+      if (!d || typeof d !== 'object') continue
+      const unit = label(d.salesUnit)
+      const dur = str(d.duration)
+      parts.push(
+        ...[
+          label(d.drugDosage),
+          label(d.drugFreq),
+          dur ? `${dur}${DURATION_UNIT[str(d.durationUnit)] ?? str(d.durationUnit)}` : '',
+          str(d.ttlDosage) ? `共 ${str(d.ttlDosage)}${unit ? ` ${unit}` : ''}` : '',
+          d.isPrn === true ? '有需要時服' : '',
+          str(d.remarks),
+        ].filter(Boolean),
+      )
+    }
+    const instr = labels(it.drugInstrs)
+    if (instr.length) parts.push(instr.join('、'))
+    if (str(it.remarks)) parts.push(str(it.remarks))
+    const cautions = labels(it.drugCautions)
+    out.push({ name, detail: parts.join(' · '), ...(cautions.length ? { caution: cautions.join('；') } : {}) })
+  }
+  return out
 }
 
 /**

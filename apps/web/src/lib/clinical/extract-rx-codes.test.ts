@@ -62,3 +62,9 @@ test('parseLlmQuoteResponse: 爛 JSON → null', () => {
   assert.equal(parseLlmQuoteResponse('not json at all', TERMS), null)
   assert.equal(parseLlmQuoteResponse('{"nope":true}', TERMS), null)
 })
+
+test('extractRxCodes — 處方藥名（cwi-walkin-20261018）：臨床文字冇提、處方有 AMOXICILLIN → 照抽到 code', () => {
+  const entries = [{ code: 'AMOX', nameEn: 'Amoxicillin', nameCn: '', active: true }] as unknown as Parameters<typeof extractRxCodes>[1]
+  const note = { kind: 'STANDARD' as const, complaints: '牙痛', findings: '', diagnosis: '', actions: '', rx: [{ name: '500MG AMOXICILLIN / 抗生素 500MG', detail: '' }] }
+  assert.deepEqual(extractRxCodes(note, entries), ['AMOX'])
+})

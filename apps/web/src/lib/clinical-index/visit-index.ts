@@ -140,10 +140,13 @@ export async function buildClinicMap(): Promise<Map<string, string>> {
   return new Map(clinics.map((c) => [c.apricotClinicId as string, c.id]))
 }
 
+/** walk-in（冇預約）到診嘅 bookingStatus — 4 = 已完成（同 Apricot 完成預約一致；跟進規則當正常到診）。 */
+export const WALK_IN_BOOKING_STATUS = 4
+
 /**
  * 由病人三樣 raw 資料 resolve 出一個 visit 索引（純函數 — unit 可測）。
- * 返 null = 該日冇 appointment 錨點（walk-in 無預約記錄 — P1 唔索引，
- * 見 progress 設計決定 #4）。
+ * 錨點：當日已到診預約 → 否則 walk-in（冇掛預約嘅診症記錄／帳單；cwi-walkin-20261018 取代設計決定 #4）。
+ * 返 null = 當日乜都冇。
  */
 export function resolvePatientDay(opts: {
   patient: any
@@ -165,23 +168,36 @@ export function resolvePatientDay(opts: {
     const t = a?.conTime ?? a?.checkInTime
     return typeof t === 'string' && t.length >= 10 && toHKDateStr(t) === day
   }) ?? null
-  if (!appt) return null
 
-  const apricotClinicId: string | null = typeof appt.clinicId === 'string' ? appt.clinicId : (patient?.registrationClinic ?? null)
+  // ★ cwi-walkin-20261018（擁有人拍板：walk-in 要算到診）：當日冇已到診預約，但有「冇掛預約」嘅診症記錄
+  //   或帳單 → 用佢做錨點（bookingStatus = 4 已完成）。冇掛預約 = bookingId 空（掛咗其他預約嘅 note 唔濫配）。
+  const onDay = (t: unknown) => typeof t === 'string' && t.length >= 10 && toHKDateStr(t) === day
+  const unlinkedNote = notes.find((n) => !n?.bookingId && onDay(n?.conTime)) ?? null
+  const dayBill = bills.find((b) => b && !b.isVoid && onDay(b.billTime)) ?? null
+  const walkIn = appt ? null : (unlinkedNote ?? dayBill)
+  if (!appt && !walkIn) return null
+
+  const anchorClinic: unknown = appt ? appt.clinicId : (walkIn?.clinicId ?? walkIn?.clinic?.id)
+  const apricotClinicId: string | null = typeof anchorClinic === 'string' ? anchorClinic : (patient?.registrationClinic ?? null)
   const clinicId = apricotClinicId ? clinicMap.get(apricotClinicId) : undefined
   if (!clinicId) return null // clinic 映射唔到（dev clinic 未設 apricotClinicId）→ 跳
 
-  // 2) note 對接：bookingId === appointment.id（§0.3 note 結構；唯一錨點）
-  const note = appt?.id ? notes.find((n) => n?.bookingId === appt.id) ?? null : null
+  // 2) note 對接：bookingId === appointment.id（§0.3 note 結構）；預約冇掛 note → 同日「冇掛預約」嘅 note
+  //    （醫生喺 Apricot 直接開診症記錄、無揀預約嘅情況）
+  const note = appt
+    ? (appt.id ? notes.find((n) => n?.bookingId === appt.id) : undefined) ?? unlinkedNote
+    : unlinkedNote
   const noteText: NoteText | null = note ? extractNoteText(note) : null
 
-  // 3) 帳單：當日非 void 合計（MD §2.3「取 ttl/os」）
-  const valid = bills.filter((b) => b && !b.isVoid)
+  // 3) 帳單：當日非 void 合計（MD §2.3「取 ttl/os」）— 有 billTime 嘅（overview 全部日子）只計當日
+  const valid = bills.filter((b) => b && !b.isVoid && (typeof b.billTime !== 'string' || onDay(b.billTime)))
   const billTtlAmt = valid.length ? Math.round(valid.reduce((s, b) => s + (Number(b.ttlAmt) || 0), 0)) : null
   const billOsAmt = valid.length ? Math.round(valid.reduce((s, b) => s + (Number(b.osAmt) || 0), 0)) : null
 
   // 4) 電話 → 多號 hash（§1.2）— 原始號碼只喺呢一刻用，唔入庫
-  const phoneNum: string | null = typeof patient?.phoneNum === 'string' ? patient.phoneNum : (appt?.clinicPatient?.phoneNum ?? null)
+  const phoneNum: string | null =
+    typeof patient?.phoneNum === 'string' ? patient.phoneNum : ((appt ?? walkIn)?.clinicPatient?.phoneNum ?? null)
+  const practitioner = appt?.practitioner ?? note?.practitioner ?? walkIn?.practitioner
 
   return {
     clinicId,
@@ -192,9 +208,9 @@ export function resolvePatientDay(opts: {
     apricotApptId: typeof appt?.id === 'string' ? appt.id : null,
     apricotNoteId: typeof note?.id === 'string' ? note.id : null,
     // 鐵律 7：爽約明確 -3（原樣存 bookingStatus；觸發邏輯先判斷 — 唔喺入庫時過濾）
-    bookingStatus: Number(appt.bookingStatus ?? 0),
+    bookingStatus: appt ? Number(appt.bookingStatus ?? 0) : WALK_IN_BOOKING_STATUS,
     visitReasonCodes: Array.isArray(appt?.visitReasons) ? appt.visitReasons.map((v: any) => v?.code).filter((c: unknown): c is string => typeof c === 'string') : [],
-    providerCode: typeof appt?.providerCode === 'string' ? appt.providerCode : (typeof appt?.practitioner?.code === 'string' ? appt.practitioner.code : null),
+    providerCode: typeof appt?.providerCode === 'string' ? appt.providerCode : (typeof practitioner?.code === 'string' ? practitioner.code : null),
     hasNote: !!noteText,
     noteKind: noteText ? noteText.kind : null,
     noteJson: noteText,
