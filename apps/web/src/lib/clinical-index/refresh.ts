@@ -92,7 +92,8 @@ export function takeRefreshTokens(clinicId: string, cpId: string): RefreshBucket
 }
 
 export class ApricotUnavailableError extends Error {
-  constructor() {
+  /** 底層原因（APRICOT_AUTH_EXPIRED／RATE_LIMITED／NOT_CONFIGURED／BUSY）— 零病人資料，俾 log／503 body 分辨 */
+  constructor(readonly reason: string = 'UNKNOWN') {
     super('APRICOT_UNAVAILABLE')
     this.name = 'ApricotUnavailableError'
   }
@@ -142,7 +143,7 @@ async function refreshPatientIndexImpl(
   try {
     appointments = await getPatientAppointments(call, cpId)
   } catch (e) {
-    if (isStopNightError(e)) throw new ApricotUnavailableError()
+    if (isStopNightError(e)) throw new ApricotUnavailableError((e as Error).message)
     throw e
   }
 
@@ -188,7 +189,7 @@ async function refreshPatientIndexImpl(
     }
     bills = allBills ? billsForDay(allBills, targetDay) : await getPatientBills(call, cpId, targetDay)
   } catch (e) {
-    if (isStopNightError(e)) throw new ApricotUnavailableError()
+    if (isStopNightError(e)) throw new ApricotUnavailableError((e as Error).message)
     throw e
   }
 

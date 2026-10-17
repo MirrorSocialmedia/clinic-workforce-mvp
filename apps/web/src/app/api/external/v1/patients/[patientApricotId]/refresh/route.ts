@@ -66,8 +66,10 @@ export async function POST(
     } catch (e) {
       if (e instanceof ApricotUnavailableError) {
         // 保護 4：唔扮成功 — 503 + lastSyncedAt（UI 顯示「Apricot 未接通，顯示緊 {日期} 嘅資料」）
+        // ★ 記底層原因（登入過期／限流／未設定／鎖搶唔到）— 之前一律 APRICOT_UNAVAILABLE，現場診斷唔到
+        console.warn(`[refresh] Apricot 未接通 reason=${e.reason}`)
         await writeRefreshAudit(staffId, cpId, 'apricot_unavailable')
-        throw new ExternalApiError(503, 'APRICOT_UNAVAILABLE', 'APRICOT_UNAVAILABLE', { lastSyncedAt })
+        throw new ExternalApiError(503, 'APRICOT_UNAVAILABLE', 'APRICOT_UNAVAILABLE', { lastSyncedAt, reason: e.reason })
       }
       throw e
     }
